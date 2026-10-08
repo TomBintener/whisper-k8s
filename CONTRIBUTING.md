@@ -8,7 +8,7 @@ Thank you for your interest in contributing to **whisper-k8s**! We welcome commu
 
 1. **Fork and Clone**:
    ```bash
-   git clone https://github.com/<your-username>/whisper-k8s.git
+   git clone https://github.com/TomBintener/whisper-k8s.git
    cd whisper-k8s
    ```
 

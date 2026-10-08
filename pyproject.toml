@@ -61,10 +61,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TomBi/whisper-k8s"
-Documentation = "https://github.com/TomBi/whisper-k8s/blob/master/README.md"
-Repository = "https://github.com/TomBi/whisper-k8s.git"
-Issues = "https://github.com/TomBi/whisper-k8s/issues"
+Homepage = "https://github.com/TomBintener/whisper-k8s"
+Documentation = "https://github.com/TomBintener/whisper-k8s/blob/master/README.md"
+Repository = "https://github.com/TomBintener/whisper-k8s.git"
+Issues = "https://github.com/TomBintener/whisper-k8s/issues"
 
 [tool.setuptools.packages.find]
 where = ["app"]

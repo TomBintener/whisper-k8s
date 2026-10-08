@@ -41,7 +41,7 @@ If you discover a security vulnerability in `whisper-k8s`, please do **not** rep
 
 Instead, please report it via responsible disclosure:
 
-1. **GitHub Security Advisory** (Preferred): Submit a private report via the [Security Advisories](https://github.com/TomBi/whisper-k8s/security/advisories) tab on GitHub.
+1. **GitHub Security Advisory** (Preferred): Submit a private report via the [Security Advisories](https://github.com/TomBintener/whisper-k8s/security/advisories) tab on GitHub.
 2. **Direct Email**: Send encrypted details to `tom.bintener@gmail.com`.
 
 ### What to Include in Your Report
