@@ -19,6 +19,14 @@ import urllib.request
 import urllib.error
 from typing import Dict, Any, Optional
 
+try:
+    import metrics  # type: ignore
+except ImportError:
+    try:
+        from app import metrics  # type: ignore
+    except ImportError:
+        metrics = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +119,8 @@ def send_webhook(
         validate_webhook_url(url)
     except Exception as e:
         logger.error("[webhook] SSRF or URL validation failed for %s: %s", url, e)
+        if metrics and hasattr(metrics, "WEBHOOKS_DISPATCHED"):
+            metrics.WEBHOOKS_DISPATCHED.inc(1.0, status="failure")
         return False
 
     body = json.dumps(payload).encode("utf-8")
@@ -130,13 +140,19 @@ def send_webhook(
                 status_code = resp.status if hasattr(resp, "status") else resp.getcode()
                 if 200 <= status_code < 300:
                     logger.info("[webhook] Delivery successful (HTTP %d)", status_code)
+                    if metrics and hasattr(metrics, "WEBHOOKS_DISPATCHED"):
+                        metrics.WEBHOOKS_DISPATCHED.inc(1.0, status="success")
                     return True
                 elif 400 <= status_code < 500:
                     logger.warning("[webhook] Delivery rejected with client error HTTP %d", status_code)
+                    if metrics and hasattr(metrics, "WEBHOOKS_DISPATCHED"):
+                        metrics.WEBHOOKS_DISPATCHED.inc(1.0, status="failure")
                     return False
         except urllib.error.HTTPError as e:
             if 400 <= e.code < 500:
                 logger.warning("[webhook] Client error HTTP %d from %s, will not retry", e.code, url)
+                if metrics and hasattr(metrics, "WEBHOOKS_DISPATCHED"):
+                    metrics.WEBHOOKS_DISPATCHED.inc(1.0, status="failure")
                 return False
             logger.warning("[webhook] Server error HTTP %d from %s (attempt %d/%d)", e.code, url, attempt, max_retries)
         except Exception as e:
@@ -147,4 +163,6 @@ def send_webhook(
             delay *= 2
 
     logger.error("[webhook] Failed to deliver webhook to %s after %d attempts", url, max_retries)
+    if metrics and hasattr(metrics, "WEBHOOKS_DISPATCHED"):
+        metrics.WEBHOOKS_DISPATCHED.inc(1.0, status="failure")
     return False

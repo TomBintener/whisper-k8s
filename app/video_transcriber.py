@@ -11,6 +11,7 @@ import os
 import sys
 import re
 import json
+import time
 import shlex
 import subprocess
 import shutil
@@ -59,6 +60,14 @@ except ImportError:
         from app import queue_manager  # type: ignore
     except ImportError:
         queue_manager = None  # type: ignore
+
+try:
+    import metrics  # type: ignore
+except ImportError:
+    try:
+        from app import metrics  # type: ignore
+    except ImportError:
+        metrics = None  # type: ignore
 
 # Default decoding settings for both Whisper and faster-whisper.
 # Tuned for long recordings to avoid repetition and reduce issues in silence.
@@ -587,6 +596,8 @@ def process_job(
         or os.environ.get("BRIDGE_JOB_ID", "")
         or item_id
     ).strip()
+    start_time = time.time()
+    mode = str(spec.get("mode") or os.environ.get("EXECUTION_MODE", "pool" if spec else "pod")).lower()
 
     callback_url = spec.get("callback_url") or spec.get("callbackUrl") or os.environ.get("CALLBACK_URL")
     callback_headers = spec.get("callback_headers") or spec.get("callbackHeaders")
@@ -776,7 +787,11 @@ def process_job(
         if model_cache is not None and cache_key in model_cache:
             model = model_cache[cache_key]
             logger.info("[warm_worker] Reusing pre-loaded model in memory for %s (%s)", model_name, backend)
+            if metrics and hasattr(metrics, "MODEL_CACHE_EVENTS"):
+                metrics.MODEL_CACHE_EVENTS.inc(1.0, event="hit", model=model_name, backend=backend)
         else:
+            if metrics and hasattr(metrics, "MODEL_CACHE_EVENTS"):
+                metrics.MODEL_CACHE_EVENTS.inc(1.0, event="miss", model=model_name, backend=backend)
             if backend == "faster-whisper":
                 fw_download_root = (
                     spec.get("hf_home")
@@ -1015,6 +1030,11 @@ def process_job(
             job_id=job_id,
         )
         _dispatch_webhook(True, s_path=subs_path, flv=flavor)
+        if metrics:
+            if hasattr(metrics, "JOBS_TOTAL"):
+                metrics.JOBS_TOTAL.inc(1.0, status="succeeded", mode=mode)
+            if hasattr(metrics, "JOB_DURATION_SECONDS"):
+                metrics.JOB_DURATION_SECONDS.observe(time.time() - start_time, mode=mode)
         return 0
     except Exception as e:
         logger.exception("Transcription job failed: %s", e)
@@ -1027,6 +1047,11 @@ def process_job(
             job_id=job_id,
         )
         _dispatch_webhook(False, err=str(e))
+        if metrics:
+            if hasattr(metrics, "JOBS_TOTAL"):
+                metrics.JOBS_TOTAL.inc(1.0, status="failed", mode=mode)
+            if hasattr(metrics, "JOB_DURATION_SECONDS"):
+                metrics.JOB_DURATION_SECONDS.observe(time.time() - start_time, mode=mode)
         return 1
 
 
@@ -1051,26 +1076,33 @@ def run_worker_daemon(
     model_cache: Dict[Any, Any] = {}
     jobs_processed = 0
 
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            logger.info("[daemon] Stop event received, shutting down daemon.")
-            break
-        if max_jobs is not None and jobs_processed >= max_jobs:
-            logger.info("[daemon] Reached max_jobs limit (%d), shutting down daemon.", max_jobs)
-            break
+    if metrics and hasattr(metrics, "ACTIVE_WORKERS"):
+        metrics.ACTIVE_WORKERS.inc(1.0, service="pool_worker")
 
-        job_spec = queue.dequeue(timeout=poll_interval)
-        if not job_spec:
-            continue
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                logger.info("[daemon] Stop event received, shutting down daemon.")
+                break
+            if max_jobs is not None and jobs_processed >= max_jobs:
+                logger.info("[daemon] Reached max_jobs limit (%d), shutting down daemon.", max_jobs)
+                break
 
-        job_id = job_spec.get("job_id") or job_spec.get("item_id")
-        logger.info("[daemon] Claimed job %s from queue, starting execution", job_id)
-        exit_code = process_job(spec=job_spec, model_cache=model_cache)
-        queue.complete(job_id, success=(exit_code == 0))
-        jobs_processed += 1
-        logger.info("[daemon] Finished job %s (exit_code=%d, total_processed=%d)", job_id, exit_code, jobs_processed)
+            job_spec = queue.dequeue(timeout=poll_interval)
+            if not job_spec:
+                continue
 
-    return 0
+            job_id = job_spec.get("job_id") or job_spec.get("item_id")
+            logger.info("[daemon] Claimed job %s from queue, starting execution", job_id)
+            exit_code = process_job(spec=job_spec, model_cache=model_cache)
+            queue.complete(job_id, success=(exit_code == 0))
+            jobs_processed += 1
+            logger.info("[daemon] Finished job %s (exit_code=%d, total_processed=%d)", job_id, exit_code, jobs_processed)
+
+        return 0
+    finally:
+        if metrics and hasattr(metrics, "ACTIVE_WORKERS"):
+            metrics.ACTIVE_WORKERS.dec(1.0, service="pool_worker")
 
 
 def main() -> int:

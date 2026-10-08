@@ -161,6 +161,17 @@ if "fastapi" not in sys.modules:
         def Body(*args, **kwargs):
             return None
 
+        class Response:
+            def __init__(self, content: Any = b"", status_code: int = 200, headers: Optional[Dict[str, str]] = None, media_type: str = ""):
+                if isinstance(content, str):
+                    self.body = content.encode("utf-8")
+                else:
+                    self.body = content
+                self.content = content
+                self.status_code = status_code
+                self.headers = headers or {}
+                self.media_type = media_type
+
         class FileResponse:
             def __init__(self, path: str, filename: str = "", media_type: str = ""):
                 self.path = path
@@ -173,6 +184,8 @@ if "fastapi" not in sys.modules:
         fastapi_mod.FastAPI = FastAPI
         fastapi_mod.HTTPException = HTTPException
         fastapi_mod.Body = Body
+        fastapi_mod.Response = Response
+        responses_mod.Response = Response
         responses_mod.FileResponse = FileResponse
         concurrency_mod.run_in_threadpool = run_in_threadpool
 

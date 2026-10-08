@@ -27,7 +27,7 @@ import urllib.parse
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Response
 from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, model_validator
@@ -51,7 +51,41 @@ except ImportError:
     except ImportError:
         webhook = None  # type: ignore
 
+try:
+    import metrics  # type: ignore
+except ImportError:
+    try:
+        from app import metrics  # type: ignore
+    except ImportError:
+        metrics = None  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+# Register dynamic queue depth collector if metrics module is available
+if metrics and hasattr(metrics, "QUEUE_DEPTH"):
+    def _collect_queue_depth():
+        counts = {"pending": 0.0, "processing": 0.0, "completed": 0.0}
+        if queue_manager:
+            try:
+                q = queue_manager.get_queue()
+                if hasattr(q, "pending_dir") and hasattr(q, "processing_dir") and hasattr(q, "completed_dir"):
+                    counts["pending"] = float(len([f for f in q.pending_dir.iterdir() if f.is_file() and f.suffix == ".json"]))
+                    counts["processing"] = float(len([f for f in q.processing_dir.iterdir() if f.is_file() and f.suffix == ".json"]))
+                    counts["completed"] = float(len([f for f in q.completed_dir.iterdir() if f.is_file() and f.suffix == ".json"]))
+                elif hasattr(q, "client"):
+                    counts["pending"] = float(q.client.llen(q.queue_key))
+                    counts["processing"] = float(q.client.scard(q.processing_key))
+                else:
+                    counts["pending"] = float(q.size())
+            except Exception as e:
+                logger.debug("Error collecting queue depth: %s", e)
+        return [
+            ({"queue": "pending"}, counts["pending"]),
+            ({"queue": "processing"}, counts["processing"]),
+            ({"queue": "completed"}, counts["completed"]),
+        ]
+
+    metrics.QUEUE_DEPTH.set_callback(_collect_queue_depth)
 
 # =========================
 # Settings
@@ -772,6 +806,19 @@ def health():
     return {"ok": True, "namespace": NAMESPACE, "kube": KUBE_MODE}
 
 
+@app.get("/metrics")
+def prometheus_metrics():
+    """
+    Prometheus metrics exposition endpoint.
+    Returns plain text formatted according to Prometheus 0.0.4 specification.
+    """
+    if metrics and hasattr(metrics, "get_metrics_registry"):
+        body = metrics.get_metrics_registry().render_prometheus_text()
+    else:
+        body = ""
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
 @app.post("/jobs", response_model=CreateJobResp)
 async def create_job(req: CreateJobReq = Body(...)):
     """
@@ -889,6 +936,8 @@ async def create_job(req: CreateJobReq = Body(...)):
             raise HTTPException(500, "Worker pool queue is not configured")
         q.enqueue(spec)
         logger.info("Enqueued job_id=%s into warm worker pool queue", job_id)
+        if metrics and hasattr(metrics, "JOBS_TOTAL"):
+            metrics.JOBS_TOTAL.inc(1.0, status="submitted", mode=job_exec_mode)
         return CreateJobResp(jobId=job_id, videoPath=video_path)
 
     worker = _make_worker_job(
@@ -921,6 +970,9 @@ async def create_job(req: CreateJobReq = Body(...)):
     except ApiException as e:
         logger.error("Failed to create worker job for job_id=%s: %s", job_id, e)
         raise HTTPException(422, f"failed to create worker job: {e}")
+
+    if metrics and hasattr(metrics, "JOBS_TOTAL"):
+        metrics.JOBS_TOTAL.inc(1.0, status="submitted", mode=job_exec_mode)
 
     return CreateJobResp(jobId=job_id, videoPath=video_path)
 
@@ -1275,6 +1327,9 @@ async def cancel_job(job_id: str):
 
     if not cancelled_anything:
         raise HTTPException(404, f"No active or queued job found with ID {job_id}")
+
+    if metrics and hasattr(metrics, "JOBS_TOTAL"):
+        metrics.JOBS_TOTAL.inc(1.0, status="cancelled", mode="cancelled")
 
     return {"ok": True, "jobId": job_id, "message": "Job cancelled successfully"}
 

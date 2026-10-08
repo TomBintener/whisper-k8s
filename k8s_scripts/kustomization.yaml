@@ -9,3 +9,4 @@ resources:
   - bridge.yaml
   - model-preload-job.yaml
   - worker-deployment.yaml
+  - worker-keda-autoscaler.yaml
