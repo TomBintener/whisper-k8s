@@ -27,8 +27,12 @@ def preload_models(models: list[str]) -> int:
     whisper_root = os.getenv("WHISPER_DOWNLOAD_ROOT", f"{models_dir}/whisper")
     hf_root = os.getenv("HF_HOME", f"{models_dir}/huggingface")
 
-    os.makedirs(whisper_root, exist_ok=True)
-    os.makedirs(hf_root, exist_ok=True)
+    try:
+        os.makedirs(whisper_root, exist_ok=True)
+        os.makedirs(hf_root, exist_ok=True)
+    except OSError as e:
+        logger.error("Failed to create model directories (%s, %s): %s", whisper_root, hf_root, e)
+        return 1
 
     logger.info("Starting model preloading into %s for models: %s", models_dir, models)
     success = True

@@ -6,6 +6,7 @@ VRAM protection, and Model Preloader Automation.
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
@@ -254,14 +255,16 @@ class TestP3ModelPreloader(unittest.TestCase):
         """Verify preload_models attempts to warm models safely with mocks."""
         mock_whisper = MagicMock()
         mock_fw_model = MagicMock()
-        with patch.dict(sys.modules, {
-            "whisper": mock_whisper,
-            "faster_whisper": MagicMock(WhisperModel=mock_fw_model),
-        }):
-            ret = entry.preload_models(["tiny"])
-            self.assertEqual(ret, 0)
-            mock_whisper.load_model.assert_called_once()
-            mock_fw_model.assert_called_once()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"MODELS_DIR": temp_dir}), \
+                 patch.dict(sys.modules, {
+                     "whisper": mock_whisper,
+                     "faster_whisper": MagicMock(WhisperModel=mock_fw_model),
+                 }):
+                ret = entry.preload_models(["tiny"])
+                self.assertEqual(ret, 0)
+                mock_whisper.load_model.assert_called_once()
+                mock_fw_model.assert_called_once()
 
 
 if __name__ == "__main__":
