@@ -9,6 +9,7 @@ format, and optionally embeds them into an MP4 file using ffmpeg.
 
 import os
 import sys
+import re
 import json
 import shlex
 import subprocess
@@ -170,8 +171,8 @@ def load_model(name: str, device: str, download_root: Optional[str] = None):
     return whisper.load_model(name, device=device, download_root=download_root)
 
 
-def load_faster_model(name: str, device: str, compute_type: str = "float16"):
-    """Load a faster-whisper model on GPU or CPU."""
+def load_faster_model(name: str, device: str, compute_type: str = "float16", download_root: Optional[str] = None):
+    """Load a faster-whisper model on GPU or CPU with persistent download_root."""
     if WhisperModel is None:
         raise RuntimeError("faster-whisper is not installed")
 
@@ -180,8 +181,34 @@ def load_faster_model(name: str, device: str, compute_type: str = "float16"):
     else:
         fw_device = "cpu"
 
-    logger.info("[model] loading faster-whisper '%s' on %s", name, fw_device)
-    return WhisperModel(name, device=fw_device, compute_type=compute_type)
+    logger.info("[model] loading faster-whisper '%s' on %s (download_root=%s)", name, fw_device, download_root)
+    return WhisperModel(name, device=fw_device, compute_type=compute_type, download_root=download_root)
+
+
+def convert_srt_to_vtt(srt_path: Path, vtt_path: Path) -> Path:
+    """
+    Convert an SRT subtitle file to WebVTT format in milliseconds.
+    Avoids re-running the full speech-to-text inference pass.
+    """
+    ensure_dir(vtt_path.parent)
+    with srt_path.open("r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Replace timestamp comma with period: 00:00:01,000 -> 00:00:01.000
+    vtt_content = re.sub(
+        r"(\d{2}:\d{2}:\d{2}),(\d{3})",
+        r"\1.\2",
+        content,
+    )
+    # Ensure standard WebVTT header
+    if not vtt_content.strip().startswith("WEBVTT"):
+        vtt_content = f"WEBVTT\n\n{vtt_content.lstrip()}"
+
+    with vtt_path.open("w", encoding="utf-8") as f:
+        f.write(vtt_content)
+
+    logger.info("[subs] fast-converted SRT to VTT -> %s", vtt_path)
+    return vtt_path
 
 
 def transcribe_whisper_cpp(
@@ -524,7 +551,19 @@ def main() -> int:
     embed_flag = as_bool(
         spec.get("embed_subs"), as_bool(os.environ.get("EMBED_SUBS"), False)
     )
-    download_root = spec.get("whisper_download_root", os.environ.get("WHISPER_DOWNLOAD_ROOT"))
+    models_dir = spec.get("models_dir") or os.environ.get("MODELS_DIR")
+    if not models_dir and videos_dir:
+        potential_models = Path(videos_dir).parent / "models"
+        models_dir = str(potential_models)
+
+    download_root = (
+        spec.get("whisper_download_root")
+        or os.environ.get("WHISPER_DOWNLOAD_ROOT")
+        or (f"{models_dir}/whisper" if models_dir else None)
+    )
+    if download_root:
+        ensure_dir(Path(download_root))
+
     output_dir = spec.get("output_dir", os.environ.get("OUTPUT_DIR"))
     cleanup = as_bool(spec.get("cleanup"), as_bool(os.environ.get("CLEANUP"), False))
 
@@ -585,7 +624,18 @@ def main() -> int:
         )
 
         if backend == "faster-whisper":
-            model = load_faster_model(model_name, device=device)
+            fw_download_root = (
+                spec.get("hf_home")
+                or os.environ.get("HF_HOME")
+                or (f"{models_dir}/huggingface" if models_dir else download_root)
+            )
+            if fw_download_root:
+                ensure_dir(Path(fw_download_root))
+            model = load_faster_model(
+                model_name,
+                device=device,
+                download_root=fw_download_root,
+            )
         elif backend == "whisper.cpp":
             # For whisper.cpp, we don't load a model object in Python.
             # We just pass the model name string to the transcribe function.
@@ -635,27 +685,21 @@ def main() -> int:
                 )
 
                 if fmt != "vtt":
-                    vtt_path, _ = transcribe_one(
-                        model=model,
-                        video_path=video_path,
-                        subs_dir=subs_dir_p,
-                        language=language,
-                        task=task,
-                        verbose=verbose,
-                        overwrite=overwrite,
-                        whisper_args=whisper_args,
-                        fmt="vtt",
-                        backend=backend,
-                    )
+                    vtt_path = subs_dir_p / f"{video_path.stem}.vtt"
+                    if subs_path and subs_path.exists():
+                        convert_srt_to_vtt(subs_path, vtt_path)
+                    else:
+                        convert_srt_to_vtt(subs_dir_p / f"{video_path.stem}.srt", vtt_path)
                 else:
-                    write_status(
-                        subs_dir_p,
-                        video_path.stem,
-                        phase="subs_done",
-                        progress=80,
-                        message="Subtitles generated",
-                    )
                     vtt_path = subs_path
+
+                write_status(
+                    subs_dir_p,
+                    video_path.stem,
+                    phase="subs_done",
+                    progress=80,
+                    message="Subtitles generated and prepared for embedding",
+                )
 
                 if vtt_path is not None:
                     out_path = subs_dir_p / f"{video_path.stem}.embedded.mp4"
