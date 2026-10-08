@@ -39,7 +39,7 @@ flowchart TD
     end
 
     subgraph Workers["3. Execution Engines"]
-        TaskQueue -.->|Dequeue (<10ms)| WarmPool["Warm Worker Pool<br/>(Models Warm in VRAM)"]
+        TaskQueue -.->|Dequeue under 10ms| WarmPool["Warm Worker Pool<br/>(Models Warm in VRAM)"]
         Bridge -.->|Submit Batch Job| EphemeralPod["Ephemeral K8s Job<br/>(Isolated Batch Pod)"]
         Bridge -.->|SSH Proxy| BareMetal["Bare-Metal Host<br/>(Native GPU / Mac Studio)"]
     end
@@ -54,7 +54,7 @@ flowchart TD
     subgraph Monitoring["5. Metrics & Autoscaling"]
         Bridge -->|GET /metrics| Prometheus["Prometheus Server"]
         Prometheus --> KEDA["KEDA Autoscaler"]
-        KEDA -->|Scale 0 -> N Replicas| WarmPool
+        KEDA -->|Scale 0 to N Replicas| WarmPool
         Output -->|HTTP Callback| Webhook["Push Webhooks (SSRF-Safe)"]
     end
 ```

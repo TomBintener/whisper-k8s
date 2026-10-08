@@ -113,10 +113,14 @@ class TestTaskQueue(unittest.TestCase):
 
         def worker_drain():
             w_q = queue_manager.FileTaskQueue(queue_dir=str(self.queue_dir))
-            while True:
+            retries = 0
+            while retries < 3:
                 j = w_q.dequeue(timeout=0.1)
                 if not j:
-                    break
+                    retries += 1
+                    time.sleep(0.02)
+                    continue
+                retries = 0
                 with lock:
                     claimed.append(j["job_id"])
                 w_q.complete(j["job_id"], success=True)
