@@ -559,141 +559,152 @@ def main() -> int:
         embed_flag,
     )
 
-    write_status(
-        subs_dir_p,
-        video_path.stem,
-        phase="loading_model",
-        progress=10,
-        message=f"Loading model '{model_name}' ({backend}) on {device}",
-    )
-
-    if backend == "faster-whisper":
-        model = load_faster_model(model_name, device=device)
-    elif backend == "whisper.cpp":
-        # For whisper.cpp, we don't load a model object in Python.
-        # We just pass the model name string to the transcribe function.
-        model = model_name
-    else:
-        model = load_model(model_name, device=device, download_root=download_root)
-
-    # Transcribe and optionally embed.
-    subs_path = None
-    if generate_subs or embed_flag:
+    try:
         write_status(
             subs_dir_p,
             video_path.stem,
-            phase="transcribing",
-            progress=30,
-            message="Transcribing audio",
+            phase="loading_model",
+            progress=10,
+            message=f"Loading model '{model_name}' ({backend}) on {device}",
         )
 
-        subs_path, detected_language = transcribe_one(
-            model=model,
-            video_path=video_path,
-            subs_dir=subs_dir_p,
-            language=language,
-            task=task,
-            verbose=verbose,
-            overwrite=overwrite,
-            whisper_args=whisper_args,
-            fmt=fmt,
-            backend=backend,
-        )
+        if backend == "faster-whisper":
+            model = load_faster_model(model_name, device=device)
+        elif backend == "whisper.cpp":
+            # For whisper.cpp, we don't load a model object in Python.
+            # We just pass the model name string to the transcribe function.
+            model = model_name
+        else:
+            model = load_model(model_name, device=device, download_root=download_root)
 
-        ffmpeg_lang = str(
-            spec.get("sub_lang")
-            or os.environ.get("SUB_LANG")
-            or language
-            or detected_language
-            or "en"
-        )
-
-        if embed_flag:
+        # Transcribe and optionally embed.
+        subs_path = None
+        if generate_subs or embed_flag:
             write_status(
                 subs_dir_p,
                 video_path.stem,
-                phase="embedding",
-                progress=70,
-                message="Embedding subtitles into video",
+                phase="transcribing",
+                progress=30,
+                message="Transcribing audio",
             )
 
-            if fmt != "vtt":
-                vtt_path, _ = transcribe_one(
-                    model=model,
-                    video_path=video_path,
-                    subs_dir=subs_dir_p,
-                    language=language,
-                    task=task,
-                    verbose=verbose,
-                    overwrite=overwrite,
-                    whisper_args=whisper_args,
-                    fmt="vtt",
-                    backend=backend,
-                )
-            else:
+            subs_path, detected_language = transcribe_one(
+                model=model,
+                video_path=video_path,
+                subs_dir=subs_dir_p,
+                language=language,
+                task=task,
+                verbose=verbose,
+                overwrite=overwrite,
+                whisper_args=whisper_args,
+                fmt=fmt,
+                backend=backend,
+            )
+
+            ffmpeg_lang = str(
+                spec.get("sub_lang")
+                or os.environ.get("SUB_LANG")
+                or language
+                or detected_language
+                or "en"
+            )
+
+            if embed_flag:
                 write_status(
                     subs_dir_p,
                     video_path.stem,
-                    phase="subs_done",
-                    progress=80,
-                    message="Subtitles generated",
-                )
-                vtt_path = subs_path
-
-            if vtt_path is not None:
-                out_path = subs_dir_p / f"{video_path.stem}.embedded.mp4"
-                embed_subtitles(
-                    video_path,
-                    vtt_path,
-                    out_path,
-                    overwrite=overwrite,
-                    language=ffmpeg_lang,
+                    phase="embedding",
+                    progress=70,
+                    message="Embedding subtitles into video",
                 )
 
-    if output_dir and subs_path and subs_path.exists():
-        try:
-            dest_dir = Path(output_dir)
-            ensure_dir(dest_dir)
-            dest_file = dest_dir / subs_path.name
-            logger.info(f"Copying result {subs_path} to {dest_file}")
-            shutil.copy(subs_path, dest_file)
-        except Exception as e:
-            logger.error(f"Failed to copy result to output directory: {e}")
+                if fmt != "vtt":
+                    vtt_path, _ = transcribe_one(
+                        model=model,
+                        video_path=video_path,
+                        subs_dir=subs_dir_p,
+                        language=language,
+                        task=task,
+                        verbose=verbose,
+                        overwrite=overwrite,
+                        whisper_args=whisper_args,
+                        fmt="vtt",
+                        backend=backend,
+                    )
+                else:
+                    write_status(
+                        subs_dir_p,
+                        video_path.stem,
+                        phase="subs_done",
+                        progress=80,
+                        message="Subtitles generated",
+                    )
+                    vtt_path = subs_path
 
-    if cleanup:
-        logger.info("Cleaning up intermediate files...")
-        try:
-            if subs_path and subs_path.exists():
-                subs_path.unlink()
-            # Clean up other potential formats
-            for f in ["srt", "vtt"]:
-                p = subs_dir_p / f"{video_path.stem}.{f}"
-                if p.exists():
-                    p.unlink()
+                if vtt_path is not None:
+                    out_path = subs_dir_p / f"{video_path.stem}.embedded.mp4"
+                    embed_subtitles(
+                        video_path,
+                        vtt_path,
+                        out_path,
+                        overwrite=overwrite,
+                        language=ffmpeg_lang,
+                    )
 
-            embedded_path = subs_dir_p / f"{video_path.stem}.embedded.mp4"
-            if embedded_path.exists():
-                embedded_path.unlink()
+        if output_dir and subs_path and subs_path.exists():
+            try:
+                dest_dir = Path(output_dir)
+                ensure_dir(dest_dir)
+                dest_file = dest_dir / subs_path.name
+                logger.info(f"Copying result {subs_path} to {dest_file}")
+                shutil.copy(subs_path, dest_file)
+            except Exception as e:
+                logger.error(f"Failed to copy result to output directory: {e}")
 
-            if video_path.exists():
-                video_path.unlink()
+        if cleanup:
+            logger.info("Cleaning up intermediate files...")
+            try:
+                if subs_path and subs_path.exists():
+                    subs_path.unlink()
+                # Clean up other potential formats
+                for f in ["srt", "vtt"]:
+                    p = subs_dir_p / f"{video_path.stem}.{f}"
+                    if p.exists():
+                        p.unlink()
 
-            status_file = subs_dir_p / f"{video_path.stem}.status.json"
-            if status_file.exists():
-                status_file.unlink()
+                embedded_path = subs_dir_p / f"{video_path.stem}.embedded.mp4"
+                if embedded_path.exists():
+                    embedded_path.unlink()
 
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+                if video_path.exists():
+                    video_path.unlink()
 
-    logger.info("[done]")
-    write_status(
-        subs_dir_p,
-        video_path.stem,
-        phase="done",
-        progress=100,
-        message="Job finished successfully",
-    )
-    return 0
+                status_file = subs_dir_p / f"{video_path.stem}.status.json"
+                if status_file.exists():
+                    status_file.unlink()
+
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
+
+        logger.info("[done]")
+        write_status(
+            subs_dir_p,
+            video_path.stem,
+            phase="done",
+            progress=100,
+            message="Job finished successfully",
+        )
+        return 0
+    except Exception as e:
+        logger.exception("Transcription job failed: %s", e)
+        write_status(
+            subs_dir_p,
+            video_path.stem,
+            phase="failed",
+            progress=0,
+            message=f"Job failed: {str(e)}",
+        )
+        return 1
 
 
 if __name__ == "__main__":

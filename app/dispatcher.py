@@ -99,6 +99,7 @@ SSH_HOST_USER = os.getenv("SSH_HOST_USER", "admin")
 SSH_REMOTE_PYTHON = os.getenv("SSH_REMOTE_PYTHON", "/usr/bin/python3")
 SSH_REMOTE_SCRIPT = os.getenv("SSH_REMOTE_SCRIPT", "/Users/Shared/whisper-k8s/app/video_transcriber.py")
 SSH_REMOTE_PATH_PREFIX = os.getenv("SSH_REMOTE_PATH_PREFIX", "/Users/Shared/data")
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/etc/secret/id_rsa")
 
 # Whisper CPP Configuration
 WHISPER_CPP_EXEC = os.getenv("WHISPER_CPP_EXEC")
@@ -451,7 +452,7 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
             client.V1EnvVar(name="REMOTE_SCRIPT", value=SSH_REMOTE_SCRIPT),
             client.V1EnvVar(name="REMOTE_PATH_PREFIX", value=SSH_REMOTE_PATH_PREFIX),
             client.V1EnvVar(name="LOCAL_PATH_PREFIX", value="/data"), # Assuming /data is the mount point
-            client.V1EnvVar(name="SSH_KEY_PATH", value="/etc/secret/ssh-privatekey"),
+            client.V1EnvVar(name="SSH_KEY_PATH", value=SSH_KEY_PATH),
             # Host IP via Downward API
             client.V1EnvVar(
                 name="HOST_IP",
@@ -495,7 +496,11 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
     pod_annotations = dict(annotations)
     pod = client.V1PodTemplateSpec(
         metadata=client.V1ObjectMeta(labels=pod_labels, annotations=pod_annotations),
-        spec=client.V1PodSpec(restart_policy="Never", containers=[container]),
+        spec=client.V1PodSpec(
+            restart_policy="Never",
+            containers=[container],
+            volumes=volumes or None,
+        ),
     )
 
     spec = client.V1JobSpec(

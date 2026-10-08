@@ -519,9 +519,17 @@ def _make_worker_job(
     if WHISPER_CPP_MODEL_ROOT:
         env.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=WHISPER_CPP_MODEL_ROOT))
 
+    job_exec_mode = (mode or EXECUTION_MODE).lower()
+
+    requests_res = {"cpu": "500m", "memory": "4Gi"}
+    limits_res = {"cpu": "2", "memory": "8Gi"}
+    if device == "gpu" and job_exec_mode != "ssh":
+        requests_res["nvidia.com/gpu"] = "1"
+        limits_res["nvidia.com/gpu"] = "1"
+
     resources = client.V1ResourceRequirements(
-        requests={"cpu": "500m", "memory": "4Gi"},
-        limits={"cpu": "2", "memory": "8Gi"},
+        requests=requests_res,
+        limits=limits_res,
     )
 
     volumes = [
@@ -540,7 +548,6 @@ def _make_worker_job(
         )
     ]
 
-    job_exec_mode = (mode or EXECUTION_MODE).lower()
     # SSH Mode Configuration
     if job_exec_mode == "ssh":
         # Override the command to run the SSH proxy script
