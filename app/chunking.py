@@ -7,9 +7,7 @@ processing chunks in parallel across worker pods, and stitching the resulting
 subtitle segments with precise global timestamp offsets and cue deduplication.
 """
 
-import os
 import re
-import sys
 import shutil
 import logging
 import subprocess
@@ -406,6 +404,6 @@ def split_audio_into_chunks(
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
         except Exception as e:
             logger.error("Failed to extract chunk %d: %s", c.index, e)
-            raise RuntimeError(f"Audio chunk extraction failed for chunk {c.index}: {e}")
+            raise RuntimeError(f"Audio chunk extraction failed for chunk {c.index}: {e}") from e
 
     return chunk_paths

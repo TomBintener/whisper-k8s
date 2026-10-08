@@ -47,7 +47,7 @@ class TestDispatcher(unittest.TestCase):
              patch.object(dispatcher, "EXECUTION_MODE", "pod"), \
              patch("dispatcher.make_projected_volume_sources", return_value=[]):
             job = dispatcher.build_job(item_id="sample.mp4")
-            
+
             # Check container mounts
             container = job.spec.template.spec.containers[0]
             mount_names = [m.name for m in container.volume_mounts]
@@ -58,7 +58,7 @@ class TestDispatcher(unittest.TestCase):
             self.assertIsNotNone(pod_volumes, "PodSpec.volumes must not be None when PVC is configured")
             vol_names = [v.name for v in pod_volumes]
             self.assertIn("data", vol_names, "PodSpec.volumes must include the 'data' PVC volume")
-            
+
             # Find the data volume and verify PVC claim name
             data_vol = next(v for v in pod_volumes if v.name == "data")
             self.assertEqual(data_vol.persistent_volume_claim.claim_name, "test-pvc")
@@ -70,10 +70,10 @@ class TestDispatcher(unittest.TestCase):
              patch.object(dispatcher, "SSH_KEY_PATH", "/etc/secret/id_rsa"), \
              patch("dispatcher.make_projected_volume_sources", return_value=[]):
             job = dispatcher.build_job(item_id="sample.mp4")
-            
+
             container = job.spec.template.spec.containers[0]
             self.assertEqual(container.command, ["python", "/app/ssh_worker.py"])
-            
+
             # Check SSH key volume in PodSpec
             pod_volumes = job.spec.template.spec.volumes
             vol_names = [v.name for v in pod_volumes]

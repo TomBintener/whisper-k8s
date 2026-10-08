@@ -230,7 +230,7 @@ def _validate_remote_url(url: str) -> None:
     try:
         addr_info = socket.getaddrinfo(hostname, None)
     except socket.gaierror as e:
-        raise HTTPException(400, f"Cannot resolve hostname '{hostname}': {e}")
+        raise HTTPException(400, f"Cannot resolve hostname '{hostname}': {e}") from e
 
     for info in addr_info:
         ip_str = info[4][0]
@@ -248,8 +248,8 @@ def _validate_remote_url(url: str) -> None:
                     400,
                     f"Disallowed remote target: IP '{ip_str}' is private or reserved (SSRF protection).",
                 )
-        except ValueError:
-            raise HTTPException(400, f"Invalid resolved IP address: '{ip_str}'")
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid resolved IP address: '{ip_str}'") from e
 
 
 # =========================
@@ -328,8 +328,8 @@ class CreateJobReq(BaseModel):
                 frac = float(self.vramFraction)
                 if not (0.0 < frac <= 1.0):
                     raise ValueError("vramFraction must be between 0.0 and 1.0")
-            except (ValueError, TypeError):
-                raise ValueError("vramFraction must be a float between 0.0 and 1.0")
+            except (ValueError, TypeError) as e:
+                raise ValueError("vramFraction must be a float between 0.0 and 1.0") from e
         if getattr(self, "parallelChunks", None) is not None:
             if not (1 <= self.parallelChunks <= 16):
                 raise ValueError("parallelChunks must be between 1 and 16")
@@ -709,7 +709,7 @@ def _make_worker_job(
     if job_exec_mode == "ssh":
         # Override the command to run the SSH proxy script
         command = ["python", "/app/ssh_worker.py"]
-        
+
         # Add SSH specific env vars
         env.extend([
             client.V1EnvVar(name="HOST_USER", value=SSH_HOST_USER),
@@ -730,7 +730,7 @@ def _make_worker_job(
                     field_ref=client.V1ObjectFieldSelector(field_path="status.hostIP")
                 )
             ))
-        
+
         # Mount the SSH key secret
         volumes.append(
             client.V1Volume(
@@ -980,7 +980,7 @@ async def create_job(req: CreateJobReq = Body(...)):
         logger.info("Created worker job in Kubernetes for job_id=%s", job_id)
     except ApiException as e:
         logger.error("Failed to create worker job for job_id=%s: %s", job_id, e)
-        raise HTTPException(422, f"failed to create worker job: {e}")
+        raise HTTPException(422, f"failed to create worker job: {e}") from e
 
     if metrics and hasattr(metrics, "JOBS_TOTAL"):
         metrics.JOBS_TOTAL.inc(1.0, status="submitted", mode=job_exec_mode)

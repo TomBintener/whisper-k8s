@@ -61,7 +61,7 @@ def validate_webhook_url(url: str) -> None:
     try:
         addr_info = socket.getaddrinfo(hostname, None)
     except socket.gaierror as e:
-        raise ValueError(f"Cannot resolve hostname '{hostname}': {e}")
+        raise ValueError(f"Cannot resolve hostname '{hostname}': {e}") from e
 
     for info in addr_info:
         ip_str = info[4][0]
@@ -81,7 +81,7 @@ def validate_webhook_url(url: str) -> None:
         except ValueError as e:
             if "is private or reserved" in str(e):
                 raise
-            raise ValueError(f"Invalid resolved IP address: '{ip_str}'")
+            raise ValueError(f"Invalid resolved IP address: '{ip_str}'") from e
 
 
 def send_webhook(

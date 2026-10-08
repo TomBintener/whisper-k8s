@@ -318,7 +318,7 @@ class MetricsRegistry:
         with self._lock:
             metric_items = sorted(self._metrics.items(), key=lambda x: x[0])
 
-        for name, metric in metric_items:
+        for _name, metric in metric_items:
             m_type = "untyped"
             if isinstance(metric, Counter):
                 m_type = "counter"

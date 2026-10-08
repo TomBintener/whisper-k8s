@@ -15,7 +15,7 @@ import logging
 import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 

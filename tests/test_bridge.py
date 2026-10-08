@@ -202,7 +202,7 @@ class TestBridge(unittest.TestCase):
             with patch.object(bridge, "SUBS_DIR", temp_dir), \
                  patch.object(bridge.k8s_batch, "list_namespaced_job", return_value=MagicMock(items=[mock_job])), \
                  patch.object(bridge.k8s_batch, "delete_namespaced_job") as mock_del:
-                
+
                 resp = asyncio.run(bridge.cancel_job(job_id))
                 self.assertTrue(resp["ok"])
                 mock_del.assert_called_once()

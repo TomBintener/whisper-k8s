@@ -299,7 +299,7 @@ def transcribe_whisper_cpp(
 ) -> tuple[Path, Optional[str]]:
     """
     Transcribe using whisper.cpp executable.
-    
+
     Assumes 'whisper-cli' is in the PATH.
     """
     executable = os.environ.get("WHISPER_CPP_EXEC")
@@ -311,7 +311,7 @@ def transcribe_whisper_cpp(
             "Could not find 'whisper-cli' or 'main' (from whisper.cpp) in PATH. "
             "Please ensure whisper.cpp is compiled and its location is in the system's PATH."
         )
-        
+
     if not os.path.exists(executable):
         # This catches cases where the env var points to a non-existent file
         raise RuntimeError(f"The configured whisper.cpp executable does not exist at: {executable}")
@@ -324,13 +324,13 @@ def transcribe_whisper_cpp(
     # whisper.cpp output filename logic: <input>.vtt or <input>.srt
     # We want to control the output path, but whisper.cpp writes to the same dir as input or specific output file.
     # The CLI usually outputs <input_filename>.<fmt>
-    
+
     # We will let whisper.cpp write to a temp location or directly to subs_dir if possible.
     # whisper.cpp -f input.wav -osrt -of output_base
-    
+
     out_base = subs_dir / video_path.stem
     out_path = subs_dir / f"{video_path.stem}.{fmt}"
-    
+
     if out_path.exists() and not overwrite:
         logger.info("[whisper.cpp] exists -> %s", out_path)
         return out_path, None
@@ -339,7 +339,7 @@ def transcribe_whisper_cpp(
     # You need to ensure models are downloaded to a known location
     model_root = os.environ.get("WHISPER_CPP_MODEL_ROOT", "/app/models")
     model_path = Path(model_root) / f"ggml-{model_name}.bin"
-    
+
     if not model_path.exists():
         raise RuntimeError(f"whisper.cpp model not found at {model_path}")
 
@@ -366,7 +366,7 @@ def transcribe_whisper_cpp(
             "-c:a", "pcm_s16le",
             str(temp_wav)
         ]
-        
+
         rc = run_cmd(ffmpeg_cmd)
         if rc != 0:
             raise RuntimeError(f"ffmpeg audio extraction failed with code {rc}")
@@ -378,17 +378,17 @@ def transcribe_whisper_cpp(
             "--output-file", str(out_base),
             str(temp_wav), # Positional argument for input file
         ]
-        
+
         if fmt == "vtt":
             cmd.append("--output-vtt")
         else:
             cmd.append("--output-srt")
-            
+
         if language:
             cmd.extend(["-l", language])
         else:
             cmd.extend(["-l", "auto"])
-            
+
         if task == "translate":
             cmd.append("-tr")
 
@@ -400,10 +400,10 @@ def transcribe_whisper_cpp(
         # Clean up the temporary WAV file immediately to save disk space
         if temp_wav.exists():
             temp_wav.unlink()
-        
+
     # whisper.cpp appends extension automatically
     # If we passed --output-file /path/to/stem, it writes /path/to/stem.vtt
-    
+
     if not out_path.exists():
          # Try to find what it wrote
          logger.warning("[whisper.cpp] expected output %s not found", out_path)
@@ -896,7 +896,7 @@ def process_job(
                     with ThreadPoolExecutor(max_workers=max_w) as executor:
                         futures = [
                             executor.submit(_transcribe_chunk, c_spec, c_file)
-                            for c_spec, c_file in zip(planned_chunks, chunk_files)
+                            for c_spec, c_file in zip(planned_chunks, chunk_files, strict=False)
                         ]
                         for fut in futures:
                             c_offset, c_text, c_lang = fut.result()

@@ -379,7 +379,7 @@ class TestBridgePoolIntegration(unittest.TestCase):
 
     def test_create_job_req_ssrf_rejection(self):
         """CreateJobReq rejects SSRF URLs in callbackUrl."""
-        with self.assertRaises(Exception):
+        with self.assertRaises((bridge.HTTPException, ValueError)):
             bridge.CreateJobReq(filename="sample.mp4", callbackUrl="http://127.0.0.1:9000/bad")
 
     def test_create_job_pool_mode_enqueues_task(self):

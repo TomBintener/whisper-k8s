@@ -11,7 +11,6 @@ Usage:
     python scripts/demo_transcribe.py --model small --backend faster-whisper
 """
 
-import os
 import sys
 import json
 import time
@@ -181,7 +180,6 @@ def run_transcription(args: argparse.Namespace) -> int:
 
     # Poll status until terminal state
     start_time = time.time()
-    last_phase = ""
     status = "running"
     sys.stdout.write("  Starting job...\r")
     sys.stdout.flush()
@@ -194,14 +192,13 @@ def run_transcription(args: argparse.Namespace) -> int:
 
         try:
             status_data = get_status(base_url, job_id)
-        except Exception as e:
+        except Exception:
             time.sleep(args.poll_interval)
             continue
 
         status = status_data.get("status", "unknown")
         progress = status_data.get("progress", 0) or 0
         message = status_data.get("message", "")
-        flavor = status_data.get("flavor", "")
 
         # Infer phase from message or flavor
         phase = "running"

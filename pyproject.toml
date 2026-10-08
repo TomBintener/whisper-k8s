@@ -79,5 +79,17 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B"]
-ignore = ["E501"]
+select = ["E", "F", "W", "B"]
+ignore = [
+    "E501",  # line length (handled by formatter)
+    "E402",  # module level import not at top of file (sys.path manipulation in tests/scripts)
+    "E701",  # multiple statements on one line
+    "B008",  # do not perform function call in argument defaults (FastAPI Depends/Body)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "F401",  # unused imports in tests (e.g. mock_dependencies side effects)
+    "F841",  # unused local variables in test assertions
+    "B017",  # blind exception assertions in mock tests
+]
