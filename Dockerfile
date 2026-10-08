@@ -22,19 +22,17 @@ ENV PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}
 
 # Install all Python dependencies in a single RUN command to optimize layer caching and atomicity.
-RUN \
-    if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-        echo "--- Installing for linux/amd64 (CUDA) ---"; \
-        pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121; \
-        pip install "faster-whisper[cuda]==1.2.1"; \
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
+        echo "--- Installing for linux/amd64 (CUDA) ---" && \
+        pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 && \
+        pip install "faster-whisper[cuda]==1.2.1" && \
         pip install "nvidia-cudnn-cu12==9.1.0.70"; \
     else \
-        echo "--- Installing for $TARGETPLATFORM (CPU) ---"; \
-        pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu; \
+        echo "--- Installing for $TARGETPLATFORM (CPU) ---" && \
+        pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu && \
         pip install "faster-whisper==1.2.1"; \
-    fi \
-    # Install common dependencies for all platforms
-    && pip install \
+    fi && \
+    pip install \
         openai-whisper==20250625 \
         kubernetes==29.0.0 \
         httpx==0.27.2 \
