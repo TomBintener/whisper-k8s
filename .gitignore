@@ -6,3 +6,5 @@ subs/
 *.log
 __pycache__/
 *.pyc
+.idea/
+*.iml
