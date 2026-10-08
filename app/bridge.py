@@ -21,10 +21,14 @@ import logging
 from typing import Optional, Dict, Literal
 
 import json
+import socket
+import ipaddress
+import urllib.parse
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, model_validator
 
@@ -116,6 +120,80 @@ k8s_core = client.CoreV1Api()
 
 
 # =========================
+# Helper functions
+# =========================
+
+def _ensure_dir(p: str) -> None:
+    """Ensure that a directory exists, creating parents as needed."""
+    os.makedirs(p, exist_ok=True)
+
+
+def _safe_under(base_dir: str, filename: str) -> str:
+    """
+    Safely resolve a filename or path under a given base directory.
+    Prevents directory traversal by rejecting any path that escapes base_dir.
+    """
+    base = os.path.realpath(base_dir)
+    if os.path.isabs(filename):
+        target = os.path.realpath(filename)
+    else:
+        target = os.path.realpath(os.path.join(base, filename))
+    if target != base and not target.startswith(base + os.sep):
+        raise HTTPException(400, "invalid filename path: escapes base directory")
+    return target
+
+
+def _validate_remote_url(url: str) -> None:
+    """
+    Validate that a remote URL is safe to download from.
+
+    Protects against SSRF by:
+    - Enforcing http or https schemes.
+    - Resolving the hostname and rejecting private, loopback, link-local,
+      reserved, multicast, and cloud metadata (169.254.169.254) addresses.
+    - Can be bypassed in local development by setting ALLOW_LOCAL_URLS=true.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise HTTPException(400, f"Disallowed URL scheme: '{parsed.scheme}'. Only http and https are allowed.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(400, "Invalid URL: missing hostname")
+
+    if os.getenv("ALLOW_LOCAL_URLS", "false").strip().lower() in {"true", "1", "yes"}:
+        return
+
+    # Check for localhost / loopback aliases directly
+    if hostname.lower() in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(400, "Access to loopback addresses is forbidden (SSRF protection)")
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise HTTPException(400, f"Cannot resolve hostname '{hostname}': {e}")
+
+    for info in addr_info:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or str(ip) == "169.254.169.254"
+            ):
+                raise HTTPException(
+                    400,
+                    f"Disallowed remote target: IP '{ip_str}' is private or reserved (SSRF protection).",
+                )
+        except ValueError:
+            raise HTTPException(400, f"Invalid resolved IP address: '{ip_str}'")
+
+
+# =========================
 # Request / response models
 # =========================
 
@@ -175,6 +253,10 @@ class CreateJobReq(BaseModel):
             raise ValueError("task must be 'transcribe' or 'translate'")
         if self.backend is not None and self.backend not in {"whisper", "faster-whisper", "whisper.cpp"}:
             raise ValueError("backend must be 'whisper' or 'faster-whisper' or 'whisper.cpp'")
+        if self.trackUrl:
+            _validate_remote_url(str(self.trackUrl))
+        if self.outputDir:
+            _safe_under(DATA_DIR, self.outputDir)
         return self
 
 
@@ -227,51 +309,7 @@ class JobStatusResp(BaseModel):
     message: Optional[str] = None
 
 
-# =========================
-# Helper functions
-# =========================
 
-def _ensure_dir(p: str) -> None:
-    """
-    Ensure that a directory exists, creating parents as needed.
-
-    Parameters
-    ----------
-    p:
-        Path to a directory that should exist after this call.
-    """
-    os.makedirs(p, exist_ok=True)
-
-
-def _safe_under(base_dir: str, filename: str) -> str:
-    """
-    Safely resolve a filename under a given base directory.
-
-    This prevents directory traversal by rejecting any path that would escape
-    the base directory after resolution.
-
-    Parameters
-    ----------
-    base_dir:
-        Root directory path that must contain the resolved file.
-    filename:
-        User provided relative filename.
-
-    Returns
-    -------
-    str
-        Absolute path to the file under base_dir.
-
-    Raises
-    ------
-    HTTPException
-        If the resolved path is not under base_dir.
-    """
-    base = os.path.realpath(base_dir)
-    target = os.path.realpath(os.path.join(base, filename))
-    if not target.startswith(base + os.sep):
-        raise HTTPException(400, "invalid filename path")
-    return target
 
 
 def _dns1123_label(value: str, max_len: int = 63) -> str:
@@ -308,19 +346,8 @@ async def _download(url: str, dest_path: str) -> None:
     The file is first written as dest_path + ".part" and atomically moved
     into place when finished. If anything goes wrong, the partial file
     is removed.
-
-    Parameters
-    ----------
-    url:
-        Remote URL to download from.
-    dest_path:
-        Target path on local disk or PVC.
-
-    Raises
-    ------
-    HTTPException
-        If the download fails, returns an HTTP error, or exceeds the size limit.
     """
+    _validate_remote_url(url)
     tmp = dest_path + ".part"
     _ensure_dir(os.path.dirname(dest_path))
     limit = MAX_DOWNLOAD_MB * 1024 * 1024
@@ -783,8 +810,44 @@ async def get_status(job_id: str):
             label_selector=selector,
         )
 
-        # No Job yet (or TTL cleaned it up) – we cannot know filename safely.
+        # No Job found in K8s (or cleaned up by TTL). Check status file on disk.
         if not jobs.items:
+            job_status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
+            if job_status_file.exists():
+                try:
+                    with job_status_file.open("r", encoding="utf-8") as f:
+                        status_data = json.load(f)
+                    phase = status_data.get("phase")
+                    phase_progress = status_data.get("progress")
+                    phase_message = status_data.get("message")
+                    sub_path = status_data.get("subtitlePath")
+                    flavor = status_data.get("flavor")
+
+                    if phase == "done":
+                        return JobStatusResp(
+                            status="succeeded",
+                            progress=phase_progress or 100,
+                            subtitlePath=sub_path,
+                            flavor=flavor,
+                            message=phase_message or "Job finished successfully",
+                        )
+                    elif phase == "failed":
+                        return JobStatusResp(
+                            status="failed",
+                            progress=phase_progress or 0,
+                            subtitlePath=sub_path,
+                            flavor=flavor,
+                            message=phase_message or "Job failed",
+                        )
+                    elif phase == "cancelled":
+                        return JobStatusResp(
+                            status="failed",
+                            progress=phase_progress or 0,
+                            message=phase_message or "Job cancelled",
+                        )
+                except Exception as e:
+                    logger.warning("Could not read job status file %s: %s", job_status_file, e)
+
             logger.debug("No jobs found yet for job_id=%s", job_id)
             return JobStatusResp(
                 status="queued",
@@ -928,3 +991,109 @@ async def get_status(job_id: str):
             progress=5,
             message="Job queued",
         )
+
+
+@app.get("/jobs/{job_id}/download")
+async def download_job_output(job_id: str, format: Optional[str] = None):
+    """
+    Download generated subtitle or embedded video file for a completed job.
+    """
+    # 1. Check job_status_file first
+    status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
+    file_to_serve: Optional[Path] = None
+
+    if status_file.exists():
+        try:
+            with status_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            sub_path = data.get("subtitlePath")
+            if sub_path and os.path.exists(sub_path):
+                file_to_serve = Path(sub_path)
+        except Exception as e:
+            logger.warning("Error reading status file %s: %s", status_file, e)
+
+    # 2. If not found via status_file, search SUBS_DIR by Job annotations
+    if not file_to_serve or not file_to_serve.exists():
+        try:
+            jobs = await run_in_threadpool(
+                k8s_batch.list_namespaced_job,
+                NAMESPACE,
+                label_selector=f"bridge-job-id={job_id}",
+            )
+            if jobs.items:
+                ann = jobs.items[0].metadata.annotations or {}
+                filename = ann.get("bridge/filename")
+                fmt = (ann.get("bridge/format") or "srt").lower()
+                if filename:
+                    paths = _expected_paths(filename, fmt)
+                    if format == "embedded" and os.path.exists(paths["embedded"]):
+                        file_to_serve = Path(paths["embedded"])
+                    elif os.path.exists(paths["subtitle"]):
+                        file_to_serve = Path(paths["subtitle"])
+        except Exception as e:
+            logger.warning("Error looking up job annotations for download %s: %s", job_id, e)
+
+    if not file_to_serve or not file_to_serve.exists():
+        raise HTTPException(404, f"Output file for job {job_id} not found")
+
+    ext = file_to_serve.suffix.lower()
+    media_type = "text/plain"
+    if ext == ".vtt":
+        media_type = "text/vtt"
+    elif ext == ".srt":
+        media_type = "application/x-subrip"
+    elif ext == ".mp4":
+        media_type = "video/mp4"
+
+    return FileResponse(
+        path=str(file_to_serve),
+        filename=file_to_serve.name,
+        media_type=media_type,
+    )
+
+
+@app.delete("/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    """
+    Cancel an active job and delete its Kubernetes batch Job resource.
+    """
+    selector = f"bridge-job-id={job_id}"
+    try:
+        jobs = await run_in_threadpool(
+            k8s_batch.list_namespaced_job,
+            NAMESPACE,
+            label_selector=selector,
+        )
+        if not jobs.items:
+            raise HTTPException(404, f"No active job found with ID {job_id}")
+
+        for job in jobs.items:
+            job_name = job.metadata.name
+            await run_in_threadpool(
+                k8s_batch.delete_namespaced_job,
+                name=job_name,
+                namespace=NAMESPACE,
+                propagation_policy="Foreground",
+            )
+            logger.info("Deleted Kubernetes job %s for job_id=%s", job_name, job_id)
+
+        # Mark status file as cancelled if present
+        status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
+        if status_file.exists():
+            try:
+                with status_file.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                data["phase"] = "cancelled"
+                data["message"] = "Job cancelled by user"
+                with status_file.open("w", encoding="utf-8") as f:
+                    json.dump(data, f)
+            except Exception:
+                pass
+
+        return {"ok": True, "jobId": job_id, "message": "Job cancelled successfully"}
+    except HTTPException:
+        raise
+    except ApiException as e:
+        logger.error("Kubernetes API error cancelling job %s: %s", job_id, e)
+        raise HTTPException(500, f"Failed to delete job: {e}")
+

@@ -55,18 +55,34 @@ def write_status(
     phase: str,
     progress: Optional[int] = None,
     message: Optional[str] = None,
+    subtitle_path: Optional[str] = None,
+    flavor: Optional[str] = None,
 ) -> None:
     """Write a simple JSON status file for this job into the subtitle directory."""
     try:
         ensure_dir(subs_dir)
-        status_path = subs_dir / f"{stem}.status.json"
+        bridge_job_id = os.environ.get("BRIDGE_JOB_ID", "").strip()
         data: Dict[str, Any] = {"phase": phase}
+        if bridge_job_id:
+            data["job_id"] = bridge_job_id
         if progress is not None:
             data["progress"] = progress
         if message is not None:
             data["message"] = message
+        if subtitle_path is not None:
+            data["subtitlePath"] = str(subtitle_path)
+        if flavor is not None:
+            data["flavor"] = flavor
+
+        status_path = subs_dir / f"{stem}.status.json"
         with status_path.open("w", encoding="utf-8") as f:
             json.dump(data, f)
+
+        if bridge_job_id:
+            job_status_path = subs_dir / f"{bridge_job_id}.status.json"
+            with job_status_path.open("w", encoding="utf-8") as f:
+                json.dump(data, f)
+
         logger.info("[status] %s -> %s", status_path, data)
     except Exception as e:
         logger.warning("Could not write status file: %s", e)
@@ -687,12 +703,15 @@ def main() -> int:
                 logger.error(f"Error during cleanup: {e}")
 
         logger.info("[done]")
+        flavor = f"{fmt}+embedded" if embed_flag else fmt
         write_status(
             subs_dir_p,
             video_path.stem,
             phase="done",
             progress=100,
             message="Job finished successfully",
+            subtitle_path=str(subs_path) if subs_path else None,
+            flavor=flavor,
         )
         return 0
     except Exception as e:
