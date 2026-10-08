@@ -100,6 +100,7 @@ SSH_REMOTE_PYTHON = os.getenv("SSH_REMOTE_PYTHON", "/usr/bin/python3")
 SSH_REMOTE_SCRIPT = os.getenv("SSH_REMOTE_SCRIPT", "/Users/Shared/whisper-k8s/app/video_transcriber.py")
 SSH_REMOTE_PATH_PREFIX = os.getenv("SSH_REMOTE_PATH_PREFIX", "/Users/Shared/data")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/etc/secret/id_rsa")
+MODELS_DIR = ENV.get("MODELS_DIR", "/data/models")
 
 # Whisper CPP Configuration
 WHISPER_CPP_EXEC = os.getenv("WHISPER_CPP_EXEC")
@@ -401,11 +402,19 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
         for k, v in extra_env.items():
             env_list.append(client.V1EnvVar(name=str(k), value=str(v)))
 
+    # Persistent model cache roots on shared storage
+    env_list.append(client.V1EnvVar(name="MODELS_DIR", value=MODELS_DIR))
+    env_list.append(client.V1EnvVar(name="WHISPER_DOWNLOAD_ROOT", value=ENV.get("WHISPER_DOWNLOAD_ROOT", f"{MODELS_DIR}/whisper")))
+    env_list.append(client.V1EnvVar(name="HF_HOME", value=ENV.get("HF_HOME", f"{MODELS_DIR}/huggingface")))
+    env_list.append(client.V1EnvVar(name="TORCH_HOME", value=ENV.get("TORCH_HOME", f"{MODELS_DIR}/torch")))
+
     # Whisper CPP config
     if WHISPER_CPP_EXEC:
         env_list.append(client.V1EnvVar(name="WHISPER_CPP_EXEC", value=WHISPER_CPP_EXEC))
     if WHISPER_CPP_MODEL_ROOT:
         env_list.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=WHISPER_CPP_MODEL_ROOT))
+    else:
+        env_list.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=f"{MODELS_DIR}/whisper.cpp"))
 
     resources = client.V1ResourceRequirements(
         requests={"cpu": REQUESTS_CPU, "memory": REQUESTS_MEM},

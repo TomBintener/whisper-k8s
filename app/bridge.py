@@ -55,6 +55,7 @@ SERVICE_ACCOUNT = os.getenv("DISPATCHER_SERVICE_ACCOUNT", "whisper-bridge")
 DATA_DIR = os.getenv("DATA_DIR", "/data")  # PVC mount root
 VIDEOS_DIR = f"{DATA_DIR}/videos"
 SUBS_DIR = f"{DATA_DIR}/subs"
+MODELS_DIR = os.getenv("MODELS_DIR", f"{DATA_DIR}/models")
 DATA_PVC_NAME = os.getenv("DATA_PVC_NAME", "whisper-data")
 
 # Prefix for Jobs created by this bridge.
@@ -540,11 +541,19 @@ def _make_worker_job(
     if cleanup:
         env.append(client.V1EnvVar(name="CLEANUP", value="true"))
 
+    # Persistent model cache roots on shared storage
+    env.append(client.V1EnvVar(name="MODELS_DIR", value=MODELS_DIR))
+    env.append(client.V1EnvVar(name="WHISPER_DOWNLOAD_ROOT", value=os.getenv("WHISPER_DOWNLOAD_ROOT", f"{MODELS_DIR}/whisper")))
+    env.append(client.V1EnvVar(name="HF_HOME", value=os.getenv("HF_HOME", f"{MODELS_DIR}/huggingface")))
+    env.append(client.V1EnvVar(name="TORCH_HOME", value=os.getenv("TORCH_HOME", f"{MODELS_DIR}/torch")))
+
     # Whisper CPP config
     if WHISPER_CPP_EXEC:
         env.append(client.V1EnvVar(name="WHISPER_CPP_EXEC", value=WHISPER_CPP_EXEC))
     if WHISPER_CPP_MODEL_ROOT:
         env.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=WHISPER_CPP_MODEL_ROOT))
+    else:
+        env.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=f"{MODELS_DIR}/whisper.cpp"))
 
     job_exec_mode = (mode or EXECUTION_MODE).lower()
 

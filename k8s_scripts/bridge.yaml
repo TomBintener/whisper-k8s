@@ -66,6 +66,8 @@ spec:
               value: "/data"
             - name: SUBS_DIR
               value: "/data"
+            - name: MODELS_DIR
+              value: "/data/models"
           volumeMounts:
             - name: data
               mountPath: /data
