@@ -74,9 +74,26 @@ flowchart TD
 
 ## Quickstart Guide
 
-### 1. Run with Docker
+### 1. Try It in 30 Seconds with Docker Compose
+Start the platform locally with a single command (CPU worker by default; works out-of-the-box on any OS):
 ```bash
-# Build the container
+docker compose up -d
+```
+
+> [!TIP]
+> If you have an NVIDIA GPU with the Container Toolkit installed, launch the GPU-accelerated worker pool instead:
+> ```bash
+> docker compose --profile gpu up -d
+> ```
+
+Transcribe the sample video immediately using the interactive CLI client:
+```bash
+python scripts/demo_transcribe.py --file demo.mp4 --format vtt --embed
+```
+
+### 2. Standalone Docker Run
+```bash
+# Build the unified container
 docker build -t whisper-suite:latest .
 
 # Run the API bridge
@@ -94,7 +111,7 @@ docker run -d --gpus all \
   whisper-suite:latest
 ```
 
-### 2. Deploy on Kubernetes with Kustomize
+### 3. Deploy on Kubernetes with Kustomize
 Deploy the entire production stack (Storage, RBAC, Bridge, Warm Workers, GPU Time-Slicing, Model Preloading, and KEDA Autoscaling) with a single command:
 
 ```bash
@@ -162,14 +179,14 @@ Explore the detailed manuals in the [`docs/`](docs/) directory:
 
 ## Verification & Testing
 
-`whisper-k8s` includes a 109-test automated verification suite that runs in ~1.1 seconds with **zero external dependencies**:
+`whisper-k8s` includes a 116-test automated verification suite that runs in ~1.1 seconds with **zero external dependencies**:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 ```text
-Ran 109 tests in 1.096s
+Ran 116 tests in 1.130s
 OK
 ```
 

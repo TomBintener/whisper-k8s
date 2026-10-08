@@ -1,0 +1,120 @@
+services:
+  # ============================================================================
+  # 1. FastAPI REST API Bridge Server
+  # ============================================================================
+  whisper-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whisper-k8s:latest
+    container_name: whisper-bridge
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVICE=bridge
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DATA_DIR=/data
+      - VIDEOS_DIR=/data/videos
+      - SUBS_DIR=/data/subs
+      - MODELS_DIR=/data/models
+      - QUEUE_DIR=/data/queue
+      - MODE=pool
+      - QUEUE_BACKEND=file
+      - DEFAULT_BACKEND=faster-whisper
+      - LOG_LEVEL=INFO
+    volumes:
+      - whisper-data:/data
+      - ./demo.mp4:/data/videos/demo.mp4:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # 2. CPU Warm Worker Daemon (Default profile: works out-of-the-box anywhere)
+  # ============================================================================
+  whisper-worker-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whisper-k8s:latest
+    container_name: whisper-worker-cpu
+    restart: unless-stopped
+    depends_on:
+      whisper-bridge:
+        condition: service_healthy
+    environment:
+      - SERVICE=pool_worker
+      - DATA_DIR=/data
+      - VIDEOS_DIR=/data/videos
+      - SUBS_DIR=/data/subs
+      - MODELS_DIR=/data/models
+      - QUEUE_DIR=/data/queue
+      - QUEUE_BACKEND=file
+      - DEFAULT_DEVICE=cpu
+      - DEFAULT_BACKEND=faster-whisper
+      - DEFAULT_COMPUTE_TYPE=float32
+      - LOG_LEVEL=INFO
+    volumes:
+      - whisper-data:/data
+      - ./demo.mp4:/data/videos/demo.mp4:ro
+
+  # ============================================================================
+  # 3. NVIDIA GPU Warm Worker Daemon (Enabled via: docker compose --profile gpu up)
+  # ============================================================================
+  whisper-worker-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whisper-k8s:latest
+    container_name: whisper-worker-gpu
+    restart: unless-stopped
+    profiles:
+      - gpu
+    depends_on:
+      whisper-bridge:
+        condition: service_healthy
+    environment:
+      - SERVICE=pool_worker
+      - DATA_DIR=/data
+      - VIDEOS_DIR=/data/videos
+      - SUBS_DIR=/data/subs
+      - MODELS_DIR=/data/models
+      - QUEUE_DIR=/data/queue
+      - QUEUE_BACKEND=file
+      - DEFAULT_DEVICE=gpu
+      - DEFAULT_BACKEND=faster-whisper
+      - DEFAULT_COMPUTE_TYPE=int8_float16
+      - DEFAULT_VRAM_FRACTION=0.25
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - LOG_LEVEL=INFO
+    volumes:
+      - whisper-data:/data
+      - ./demo.mp4:/data/videos/demo.mp4:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ============================================================================
+  # 4. Redis Queue (Optional profile: docker compose --profile redis up)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: whisper-redis
+    restart: unless-stopped
+    profiles:
+      - redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  whisper-data:
+    name: whisper-k8s-data
