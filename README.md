@@ -1,5 +1,6 @@
 # whisper-k8s
 
+[![CI](https://github.com/TomBi/whisper-k8s/actions/workflows/ci.yml/badge.svg)](https://github.com/TomBi/whisper-k8s/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.24%2B-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)

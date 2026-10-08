@@ -1,0 +1,42 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "app/**"
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "app/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Multi-Stage Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Docker image (smoke test)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: whisper-k8s:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
