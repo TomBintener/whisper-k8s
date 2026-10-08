@@ -60,14 +60,13 @@ def format_timestamp(seconds: float, fmt: str = "srt") -> str:
     """
     if seconds < 0:
         seconds = 0.0
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    whole_secs = int(secs)
-    millis = int(round((secs - whole_secs) * 1000))
-    if millis >= 1000:
-        whole_secs += 1
-        millis = 0
+    total_ms = int(round(seconds * 1000))
+    hours = total_ms // 3600000
+    remainder = total_ms % 3600000
+    minutes = remainder // 60000
+    remainder %= 60000
+    whole_secs = remainder // 1000
+    millis = remainder % 1000
 
     sep = "," if fmt.lower() == "srt" else "."
     return f"{hours:02d}:{minutes:02d}:{whole_secs:02d}{sep}{millis:03d}"
