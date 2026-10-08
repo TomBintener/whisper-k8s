@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper-bridge
+  namespace: whisper
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector: { matchLabels: { app: whisper-bridge } }
+  template:
+    metadata:
+      labels: { app: whisper-bridge }
+    spec:
+      serviceAccountName: whisper-bridge
+      containers:
+        - name: bridge
+          image: capcapcat/whisper-worker:1.4
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          env:
+            - name: SERVICE
+              value: bridge
+            - name: PORT
+              value: "8080"
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: DISPATCHER_IMAGE
+              value: capcapcat/whisper-worker:1.4
+            - name: DISPATCHER_SERVICE_ACCOUNT
+              value: whisper-bridge
+            - name: WORKER_IMAGE
+              value: capcapcat/whisper-worker:1.4
+            - name: WORKER_MODEL
+              value: base
+            - name: DATA_PVC_NAME
+              value: whisper-data
+            - name: EXECUTION_MODE
+              value: "ssh"
+            - name: SSH_HOST_USER
+              value: "lmucastadmin"
+            - name: SSH_HOST_IP
+              # Special DNS name for OrbStack/Docker Desktop to reach the Mac host
+              value: "host.docker.internal"
+            - name: HOST_SETUP_DIR
+              value: "/Users/lmucastadmin/whisper-setup"
+            - name: SSH_REMOTE_PYTHON
+              value: "/usr/bin/python3"
+            - name: SSH_REMOTE_SCRIPT
+              value: "$(HOST_SETUP_DIR)/migration-opencast/whisper-k8s/app/video_transcriber.py"
+            - name: SSH_REMOTE_PATH_PREFIX
+              value: "$(HOST_SETUP_DIR)/data"
+            - name: WHISPER_CPP_EXEC
+              value: "$(HOST_SETUP_DIR)/ssh-worker/whisper.cpp/build/bin/whisper-cli"
+            - name: WHISPER_CPP_MODEL_ROOT
+              value: "$(HOST_SETUP_DIR)/ssh-worker/whisper.cpp/models"
+            - name: SSH_KEY_PATH
+              value: "/etc/secret/id_rsa"
+            - name: VIDEOS_DIR
+              value: "/data"
+            - name: SUBS_DIR
+              value: "/data"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: whisper-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisper-bridge
+  namespace: whisper
+spec:
+  selector: { app: whisper-bridge }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

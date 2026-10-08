@@ -1,0 +1,8 @@
+videos/
+subs/
+*.mp4
+!demo.mp4
+*.srt
+*.log
+__pycache__/
+*.pyc

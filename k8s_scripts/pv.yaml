@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: whisper-data-pv
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    # WARNING: hostPath is for single-node development clusters (like OrbStack, Docker Desktop).
+    # The specified path MUST exist on the node where the pod is scheduled.
+    # For a multi-node production cluster, you must use a network-based storage
+    # solution like NFS or a cloud provider's block storage (EBS, GCE-PD, etc.).
+    path: "/Users/lmucastadmin/whisper-setup/data"

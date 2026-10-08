@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: whisper-bridge
+  namespace: whisper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: whisper-manager-role
+  namespace: whisper
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create","get","list","watch","update","patch","delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create","get","list","watch","update","patch","delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","list","watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: whisper-manager-binding
+  namespace: whisper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: whisper-manager-role
+subjects:
+- kind: ServiceAccount
+  name: whisper-bridge
+  namespace: whisper
