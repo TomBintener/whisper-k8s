@@ -92,6 +92,19 @@ Transcribe the sample video immediately using the interactive CLI client:
 python scripts/demo_transcribe.py --file demo.mp4 --format vtt --embed
 ```
 
+```text
+[whisper-k8s] Connecting to bridge at http://localhost:8080... Connected! (standalone mode)
+[whisper-k8s] Submitting 'demo.mp4' (backend=faster-whisper, model=base, format=vtt)...
+[whisper-k8s] Job accepted -> ID: 9e408ce3da5b4ea689fd8e7a55c76519
+  [████████████████████████████] 100% [done] - Job finished successfully (0.4s)
+[whisper-k8s] Transcription completed successfully!
+[whisper-k8s] Downloading subtitle to ./demo.vtt... Saved (120 bytes)
+
+  --- Subtitle Preview ---
+  00:00.000 --> 00:17.230 | Right wife, life good, wife fight back, kill wife, wife gone. Think about wife regret.
+  ------------------------
+```
+
 ### 2. Standalone Docker Run
 ```bash
 # Build the unified container
@@ -124,7 +137,7 @@ Verify deployment status:
 kubectl get pods,services,scaledobjects -n whisper
 ```
 
-### 3. Submit a Transcription Job
+### 4. Submit a Transcription Job with cURL
 Submit a job using `curl`:
 
 ```bash
@@ -166,15 +179,20 @@ curl http://localhost:8080/jobs/4c98a3b890d24e1b8b80e8f7ec409d20/download -o lec
 
 ---
 
-## Documentation Index
+## Documentation & API Explorer
 
-Explore the detailed manuals in the [`docs/`](docs/) directory:
+Explore the detailed documentation and interactive API specifications:
 
+- 🌐 **Interactive Swagger UI**: [`http://localhost:8080/docs`](http://localhost:8080/docs) (Live API testing console)
+- 📖 **Interactive ReDoc**: [`http://localhost:8080/redoc`](http://localhost:8080/redoc) (Detailed OpenAPI schema explorer)
+- 📄 **[OpenAPI 3.1 Specification](docs/openapi.json)**: Static schema for API client code generation
 - 📖 **[Architecture & Internals](docs/architecture.md)**: Deep dive into the 3 execution modes, multi-backend inference, GPU time-slicing mechanics, and the P4 VAD chunking/stitching algorithm.
-- 📡 **[API Reference](docs/api_reference.md)**: Exhaustive documentation of all REST endpoints (`/jobs`, `/status`, `/download`, `/metrics`), request payloads, webhook event format, and SSRF security.
+- 📡 **[API Reference Manual](docs/api_reference.md)**: Exhaustive documentation of all REST endpoints (`/jobs`, `/status`, `/download`, `/metrics`), request payloads, webhook event format, and SSRF security.
 - ☸️ **[Kubernetes Deployment & Operations](docs/deployment_and_k8s.md)**: Production guide covering PVC provisioning, RBAC, NVIDIA time-slicing profiles, preloader Jobs, and KEDA scale-to-zero autoscaling.
-- ⚙️ **[Configuration & Environment Variables](docs/configuration.md)**: Comprehensive reference table of all environment variables across bridge, worker, queue manager, and dispatcher.
-- 🧪 **[Development, Testing & Benchmarking](docs/development_and_testing.md)**: How to run the 107 zero-dependency test suite, mock external services, run throughput benchmarks, and contribute.
+- ⚙️ **[Configuration Reference](docs/configuration.md)**: Comprehensive reference table of all environment variables across bridge, worker, queue manager, and dispatcher.
+- 🧪 **[Development, Testing & Benchmarking](docs/development_and_testing.md)**: How to run the 116 zero-dependency test suite, mock external services, and run throughput benchmarks.
+- 🤝 **[Contributing Guidelines](CONTRIBUTING.md)**: PR workflow, Ruff code styling, and development standards.
+- 🛡️ **[Security Policy & Threat Model](SECURITY.md)**: SSRF defenses, path traversal containment, and responsible disclosure SLA.
 
 ---
 

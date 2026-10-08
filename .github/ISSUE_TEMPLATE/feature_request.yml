@@ -1,0 +1,37 @@
+name: "Feature Request"
+description: "Suggest an idea, optimization, or architectural enhancement for whisper-k8s"
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature or optimization! Please describe your use case and desired architecture below.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: Is your feature request related to a specific performance bottleneck, scale requirement, or missing capability?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution or Architecture
+      description: Describe what you would like to see implemented and how it fits into the current platform architecture.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Approaches Considered
+      description: Did you consider alternative libraries, queue backends, or deployment models?
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Any benchmarks, diagrams, or links to external references.

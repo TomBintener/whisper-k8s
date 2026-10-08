@@ -1,0 +1,586 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Liveness and readiness endpoint.\n\nReturns some basic metadata so you can confirm that the bridge is running\nand can talk to Kubernetes.\n\nReturns\n-------\ndict\n    Simple JSON object with \"ok\", \"namespace\" and \"kube\" mode.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus Metrics",
+        "description": "Prometheus metrics exposition endpoint.\nReturns plain text formatted according to Prometheus 0.0.4 specification.",
+        "operationId": "prometheus_metrics_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs": {
+      "post": {
+        "summary": "Create Job",
+        "description": "Create a new transcription or translation job.\n\nBehavior:\n\n- If `filename` is provided:\n    * verify that VIDEOS_DIR/filename exists on the shared volume.\n- If only `trackUrl` is provided:\n    * download the file into VIDEOS_DIR under a generated or URL based name.\n\nIn both cases the bridge then:\n- builds a worker Job for the given file and options\n- creates the Job in Kubernetes\n- responds with a jobId that clients can use with /status\n\nParameters\n----------\nreq:\n    Parsed CreateJobReq payload.\n\nReturns\n-------\nCreateJobResp\n    Basic job metadata including jobId and videoPath.\n\nRaises\n------\nHTTPException\n    If the input file cannot be found or the worker Job cannot be created.",
+        "operationId": "create_job_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateJobResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status/{job_id}": {
+      "get": {
+        "summary": "Get Status",
+        "description": "Get the current status of a job previously created via /jobs.\n\nThe bridge:\n- finds the Job with label bridge-job-id=job_id\n- inspects its annotations to know the filename and format\n- reads a status JSON (if present) written by the worker\n- checks on disk whether subtitles and embedded MP4 have been written\n- maps that to a high level status, progress and flavor\n\nStatus mapping (job-centric):\n- no Job found         -> \"queued\", progress 5\n- Job Failed           -> \"failed\"\n- Job Complete         -> \"succeeded\"\n- Job active           -> \"running\"\n- Job exists but idle  -> \"queued\"",
+        "operationId": "get_status_status__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/download": {
+      "get": {
+        "summary": "Download Job Output",
+        "description": "Download generated subtitle or embedded video file for a completed job.",
+        "operationId": "download_job_output_jobs__job_id__download_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "delete": {
+        "summary": "Cancel Job",
+        "description": "Cancel an active job and delete its Kubernetes batch Job resource or queued task.",
+        "operationId": "cancel_job_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateJobReq": {
+        "properties": {
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "trackUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trackurl"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "srt",
+              "vtt"
+            ],
+            "title": "Format",
+            "default": "srt"
+          },
+          "device": {
+            "type": "string",
+            "enum": [
+              "cpu",
+              "gpu"
+            ],
+            "title": "Device",
+            "default": "gpu"
+          },
+          "embed": {
+            "type": "boolean",
+            "title": "Embed",
+            "default": false
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "overwrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overwrite"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "transcribe",
+                  "translate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          },
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "whisper",
+                  "faster-whisper",
+                  "whisper.cpp"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "kubernetes",
+                  "pod",
+                  "ssh",
+                  "pool"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "outputDir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputdir"
+          },
+          "cleanup": {
+            "type": "boolean",
+            "title": "Cleanup",
+            "default": false
+          },
+          "computeType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "float16",
+                  "int8_float16",
+                  "int8",
+                  "float32"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computetype"
+          },
+          "vramFraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vramfraction"
+          },
+          "parallelChunks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parallelchunks"
+          },
+          "chunkDurationSec": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunkdurationsec"
+          },
+          "enableChunking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enablechunking"
+          },
+          "callbackUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callbackurl"
+          },
+          "callbackHeaders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callbackheaders"
+          }
+        },
+        "type": "object",
+        "title": "CreateJobReq",
+        "description": "Incoming payload for POST /jobs.\n\nEither `filename` or `trackUrl` must be provided:\n\n- filename: path relative to VIDEOS_DIR inside the shared PVC.\n- trackUrl: remote URL that the bridge will download into VIDEOS_DIR.\n\nOptional controls:\n- format: \"srt\" or \"vtt\" for the external subtitle file.\n- device: \"cpu\" or \"gpu\" (worker maps gpu to cuda).\n- embed: whether to embed subtitles into an MP4 output.\n- model: Whisper model name hint (for example \"base\", \"small\", \"large\").\n- overwrite:\n    * None -> worker default (no overwrite)\n    * True -> force recompute and overwrite outputs\n    * False -> reuse existing outputs if present\n- language: language hint for Whisper, or None to let it auto detect.\n- task: \"transcribe\" (keep source language) or \"translate\" (to English).\n- outputDir: Optional path to copy the results to after completion.\n- cleanup: If True, delete input video and intermediate files after completion."
+      },
+      "CreateJobResp": {
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "title": "Jobid"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "accepted"
+          },
+          "videoPath": {
+            "type": "string",
+            "title": "Videopath"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "default": "default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobId",
+          "videoPath"
+        ],
+        "title": "CreateJobResp",
+        "description": "Response body for a successful POST /jobs.\n\nAttributes\n----------\njobId:\n    Logical bridge job identifier used for subsequent status checks.\nstatus:\n    Current high level status for the job, initially \"accepted\".\nvideoPath:\n    Absolute path inside the worker PVC where the input file was written.\nnamespace:\n    Kubernetes namespace where worker Jobs are created."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JobStatusResp": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "subtitlePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitlepath"
+          },
+          "flavor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flavor"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "JobStatusResp",
+        "description": "Response body for GET /status/{job_id}.\n\nAttributes\n----------\nstatus:\n    \"queued\", \"running\", \"succeeded\", or \"failed\".\nprogress:\n    Rough progress estimate (0 to 100) for clients that want a simple bar.\nsubtitlePath:\n    Path to the generated subtitle file on the shared PVC, if available.\nflavor:\n    A string describing the output type, for example:\n    - \"srt\"\n    - \"vtt\"\n    - \"srt+embedded\"\n    - \"vtt+embedded\"\nmessage:\n    Optional error or status message for failed jobs or phase messages."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
