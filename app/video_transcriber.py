@@ -36,6 +36,14 @@ try:
 except Exception:
     WhisperModel = None  # type: ignore
 
+try:
+    import chunking  # type: ignore
+except ImportError:
+    try:
+        from app import chunking  # type: ignore
+    except ImportError:
+        chunking = None  # type: ignore
+
 # Default decoding settings for both Whisper and faster-whisper.
 # Tuned for long recordings to avoid repetition and reduce issues in silence.
 DEFAULT_WHISPER_ARGS: dict[str, object] = {
@@ -614,6 +622,26 @@ def main() -> int:
     output_dir = spec.get("output_dir", os.environ.get("OUTPUT_DIR"))
     cleanup = as_bool(spec.get("cleanup"), as_bool(os.environ.get("CLEANUP"), False))
 
+    enable_chunking = as_bool(
+        spec.get("enable_chunking"),
+        as_bool(os.environ.get("ENABLE_CHUNKING"), False),
+    )
+    parallel_chunks = int(
+        spec.get("parallel_chunks")
+        or os.environ.get("PARALLEL_CHUNKS")
+        or 1
+    )
+    chunk_duration_sec = float(
+        spec.get("chunk_duration_sec")
+        or os.environ.get("CHUNK_DURATION_SEC")
+        or 600.0
+    )
+    chunk_threshold_sec = float(
+        spec.get("chunk_threshold_sec")
+        or os.environ.get("CHUNK_THRESHOLD_SEC")
+        or 600.0
+    )
+
     # Advanced whisper parameters (temperature, beam search, etc).
     whisper_args: Dict[str, Any] = dict(DEFAULT_WHISPER_ARGS)
     for k in ["temperature", "best_of", "beam_size", "patience"]:
@@ -665,7 +693,7 @@ def main() -> int:
             compute_type = "float32"
 
     logger.info(
-        "[job] item_id=%s model=%s backend=%s device=%s compute_type=%s vram_fraction=%s fmt=%s overwrite=%s embed=%s",
+        "[job] item_id=%s model=%s backend=%s device=%s compute_type=%s vram_fraction=%s fmt=%s overwrite=%s embed=%s chunking=%s parallel_chunks=%d",
         item_id,
         model_name,
         backend,
@@ -675,6 +703,8 @@ def main() -> int:
         fmt,
         overwrite,
         embed_flag,
+        enable_chunking,
+        parallel_chunks,
     )
 
     try:
@@ -709,6 +739,7 @@ def main() -> int:
 
         # Transcribe and optionally embed.
         subs_path = None
+        detected_language = None
         if generate_subs or embed_flag:
             write_status(
                 subs_dir_p,
@@ -718,18 +749,110 @@ def main() -> int:
                 message="Transcribing audio",
             )
 
-            subs_path, detected_language = transcribe_one(
-                model=model,
-                video_path=video_path,
-                subs_dir=subs_dir_p,
-                language=language,
-                task=task,
-                verbose=verbose,
-                overwrite=overwrite,
-                whisper_args=whisper_args,
-                fmt=fmt,
-                backend=backend,
-            )
+            # Check if chunking should be applied
+            media_duration = None
+            if chunking is not None and (enable_chunking or parallel_chunks > 1):
+                try:
+                    media_duration = chunking.get_media_duration(video_path)
+                except Exception as e:
+                    logger.debug("Could not probe media duration: %s", e)
+
+            use_chunking = False
+            planned_chunks = []
+            if chunking is not None and media_duration is not None and (
+                enable_chunking or media_duration >= chunk_threshold_sec or parallel_chunks > 1
+            ):
+                try:
+                    silences = chunking.detect_silence_points(video_path)
+                    planned_chunks = chunking.plan_chunks(
+                        media_duration,
+                        target_duration=chunk_duration_sec,
+                        silence_points=silences,
+                    )
+                    if len(planned_chunks) > 1:
+                        use_chunking = True
+                except Exception as e:
+                    logger.warning("Chunk planning failed, falling back to monolithic: %s", e)
+
+            if use_chunking:
+                logger.info(
+                    "[chunking] Splitting %s (%.1fs) into %d chunks (parallel_chunks=%d)",
+                    video_path.name,
+                    media_duration,
+                    len(planned_chunks),
+                    parallel_chunks,
+                )
+                tmp_chunks_dir = subs_dir_p / f"{video_path.stem}_chunks"
+                ensure_dir(tmp_chunks_dir)
+                try:
+                    chunk_files = chunking.split_audio_into_chunks(
+                        video_path, tmp_chunks_dir, planned_chunks
+                    )
+
+                    chunk_sub_results = []
+
+                    def _transcribe_chunk(c_spec, c_file):
+                        c_subs_path, c_lang = transcribe_one(
+                            model=model,
+                            video_path=c_file,
+                            subs_dir=tmp_chunks_dir,
+                            language=language,
+                            task=task,
+                            verbose=verbose,
+                            overwrite=True,
+                            whisper_args=whisper_args,
+                            fmt=fmt,
+                            backend=backend,
+                        )
+                        c_text = ""
+                        if c_subs_path and c_subs_path.exists():
+                            with c_subs_path.open("r", encoding="utf-8") as f:
+                                c_text = f.read()
+                        return (c_spec.start_sec, c_text, c_lang)
+
+                    from concurrent.futures import ThreadPoolExecutor
+                    max_w = max(1, min(parallel_chunks, len(planned_chunks)))
+                    with ThreadPoolExecutor(max_workers=max_w) as executor:
+                        futures = [
+                            executor.submit(_transcribe_chunk, c_spec, c_file)
+                            for c_spec, c_file in zip(planned_chunks, chunk_files)
+                        ]
+                        for fut in futures:
+                            c_offset, c_text, c_lang = fut.result()
+                            chunk_sub_results.append((c_text, c_offset))
+                            if not detected_language and c_lang:
+                                detected_language = c_lang
+                            progress_pct = int(30 + 35 * (len(chunk_sub_results) / len(planned_chunks)))
+                            write_status(
+                                subs_dir_p,
+                                video_path.stem,
+                                phase="transcribing",
+                                progress=progress_pct,
+                                message=f"Transcribed chunk {len(chunk_sub_results)}/{len(planned_chunks)}",
+                            )
+
+                    stitched_content = chunking.stitch_subtitles(chunk_sub_results, fmt=fmt)
+                    subs_path = subs_dir_p / f"{video_path.stem}.{fmt}"
+                    ensure_dir(subs_path.parent)
+                    with subs_path.open("w", encoding="utf-8") as f:
+                        f.write(stitched_content)
+
+                    logger.info("[chunking] Successfully stitched %d chunks into %s", len(planned_chunks), subs_path)
+                finally:
+                    shutil.rmtree(tmp_chunks_dir, ignore_errors=True)
+            else:
+                subs_path, detected_language = transcribe_one(
+                    model=model,
+                    video_path=video_path,
+                    subs_dir=subs_dir_p,
+                    language=language,
+                    task=task,
+                    verbose=verbose,
+                    overwrite=overwrite,
+                    whisper_args=whisper_args,
+                    fmt=fmt,
+                    backend=backend,
+                )
 
             ffmpeg_lang = str(
                 spec.get("sub_lang")

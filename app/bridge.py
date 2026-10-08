@@ -236,6 +236,9 @@ class CreateJobReq(BaseModel):
     cleanup: bool = False
     computeType: Literal["float16", "int8_float16", "int8", "float32"] | None = None
     vramFraction: Optional[float] = None
+    parallelChunks: Optional[int] = None
+    chunkDurationSec: Optional[int] = None
+    enableChunking: Optional[bool] = None
 
     @model_validator(mode="after")
     def _validate(self):
@@ -246,6 +249,7 @@ class CreateJobReq(BaseModel):
         - format and device must be in the allowed sets.
         - task, if provided, must be one of the supported values.
         - computeType and vramFraction, if provided, must be valid.
+        - parallelChunks and chunkDurationSec, if provided, must be valid.
         """
         if not self.trackUrl and not self.filename:
             raise ValueError("Provide trackUrl or filename")
@@ -266,6 +270,12 @@ class CreateJobReq(BaseModel):
                     raise ValueError("vramFraction must be between 0.0 and 1.0")
             except (ValueError, TypeError):
                 raise ValueError("vramFraction must be a float between 0.0 and 1.0")
+        if getattr(self, "parallelChunks", None) is not None:
+            if not (1 <= self.parallelChunks <= 16):
+                raise ValueError("parallelChunks must be between 1 and 16")
+        if getattr(self, "chunkDurationSec", None) is not None:
+            if self.chunkDurationSec < 30:
+                raise ValueError("chunkDurationSec must be at least 30 seconds")
         if self.trackUrl:
             _validate_remote_url(str(self.trackUrl))
         if self.outputDir:
@@ -448,6 +458,9 @@ def _make_worker_job(
     cleanup: bool = False,
     compute_type: str | None = None,
     vram_fraction: float | None = None,
+    parallel_chunks: int | None = None,
+    chunk_duration_sec: int | None = None,
+    enable_chunking: bool | None = None,
 ) -> client.V1Job:
     """
     Build a Kubernetes Job that runs the worker on a single file.
@@ -485,6 +498,12 @@ def _make_worker_job(
         Optional quantization hint for faster-whisper (e.g. "int8_float16").
     vram_fraction:
         Optional per-process CUDA memory cap for GPU time-slicing (e.g. 0.25).
+    parallel_chunks:
+        Optional number of parallel worker chunks for long audio.
+    chunk_duration_sec:
+        Optional target duration per chunk in seconds.
+    enable_chunking:
+        Whether to force enable chunking.
 
     Returns
     -------
@@ -557,6 +576,14 @@ def _make_worker_job(
         env.append(client.V1EnvVar(name="COMPUTE_TYPE", value=compute_type))
     if vram_fraction is not None:
         env.append(client.V1EnvVar(name="CUDA_MEMORY_FRACTION", value=str(vram_fraction)))
+
+    # Audio chunking and parallel dispatch
+    if parallel_chunks is not None:
+        env.append(client.V1EnvVar(name="PARALLEL_CHUNKS", value=str(parallel_chunks)))
+    if chunk_duration_sec is not None:
+        env.append(client.V1EnvVar(name="CHUNK_DURATION_SEC", value=str(chunk_duration_sec)))
+    if enable_chunking is not None:
+        env.append(client.V1EnvVar(name="ENABLE_CHUNKING", value="true" if enable_chunking else "false"))
 
     # Output Dir and Cleanup
     if output_dir:
@@ -807,6 +834,9 @@ async def create_job(req: CreateJobReq = Body(...)):
         cleanup=req.cleanup,
         compute_type=req.computeType,
         vram_fraction=req.vramFraction,
+        parallel_chunks=req.parallelChunks,
+        chunk_duration_sec=req.chunkDurationSec,
+        enable_chunking=req.enableChunking,
     )
     logger.info("Submitting worker job for job_id=%s filename=%s", job_id, os.path.basename(filename))
 

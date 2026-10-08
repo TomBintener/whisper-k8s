@@ -106,6 +106,9 @@ COMPUTE_TYPE = ENV.get("COMPUTE_TYPE")
 GPU_RESOURCE_NAME = ENV.get("GPU_RESOURCE_NAME", "nvidia.com/gpu")
 REQUESTS_GPU = ENV.get("REQUESTS_GPU")
 LIMITS_GPU = ENV.get("LIMITS_GPU")
+PARALLEL_CHUNKS = ENV.get("PARALLEL_CHUNKS")
+CHUNK_DURATION_SEC = ENV.get("CHUNK_DURATION_SEC")
+ENABLE_CHUNKING = ENV.get("ENABLE_CHUNKING")
 
 # Whisper CPP Configuration
 WHISPER_CPP_EXEC = os.getenv("WHISPER_CPP_EXEC")
@@ -418,6 +421,14 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
         env_list.append(client.V1EnvVar(name="CUDA_MEMORY_FRACTION", value=CUDA_MEMORY_FRACTION))
     if COMPUTE_TYPE:
         env_list.append(client.V1EnvVar(name="COMPUTE_TYPE", value=COMPUTE_TYPE))
+
+    # Audio chunking and parallel dispatch
+    if PARALLEL_CHUNKS:
+        env_list.append(client.V1EnvVar(name="PARALLEL_CHUNKS", value=PARALLEL_CHUNKS))
+    if CHUNK_DURATION_SEC:
+        env_list.append(client.V1EnvVar(name="CHUNK_DURATION_SEC", value=CHUNK_DURATION_SEC))
+    if ENABLE_CHUNKING:
+        env_list.append(client.V1EnvVar(name="ENABLE_CHUNKING", value=ENABLE_CHUNKING))
 
     # Whisper CPP config
     if WHISPER_CPP_EXEC:
