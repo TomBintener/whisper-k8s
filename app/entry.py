@@ -2,11 +2,18 @@
 """
 Single entrypoint for the whisper-suite image.
 
-Chooses which component to run based on SERVICE env:
+Routes execution to the appropriate service component based on the SERVICE environment
+variable or command-line flags:
 
-- SERVICE=bridge      -> run FastAPI bridge via uvicorn
-- SERVICE=worker      -> run video_transcriber worker once and exit
-- SERVICE=dispatcher  -> run dispatcher batch scheduler
+- SERVICE=bridge       -> run FastAPI HTTP API bridge via uvicorn (port 8080)
+- SERVICE=pool_worker  -> run persistent warm worker daemon pulling tasks from queue
+- SERVICE=worker       -> run single-pass video_transcriber worker and exit
+- SERVICE=preload      -> pre-download and cache model weights onto persistent PVC
+- SERVICE=dispatcher   -> run Kubernetes batch Job scheduler from ConfigMap
+
+CLI Overrides:
+- --preload, -p [models] -> trigger model preloader (e.g. --preload base,small)
+- --daemon, -d           -> run persistent worker daemon
 """
 
 import os
