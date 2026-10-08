@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .idea/
 *.iml
+data_e2e/

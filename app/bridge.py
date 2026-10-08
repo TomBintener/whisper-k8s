@@ -160,14 +160,22 @@ def _load_kube() -> str:
         logger.info("Loaded in cluster Kubernetes config")
         return "incluster"
     except Exception:
-        config.load_kube_config()
-        logger.info("Loaded Kubernetes config from kubeconfig")
-        return "kubeconfig"
+        try:
+            config.load_kube_config()
+            logger.info("Loaded Kubernetes config from kubeconfig")
+            return "kubeconfig"
+        except Exception as e:
+            logger.warning("No Kubernetes config available (%s); running in standalone/pool mode", e)
+            return "standalone"
 
 
 KUBE_MODE = _load_kube()
-k8s_batch = client.BatchV1Api()
-k8s_core = client.CoreV1Api()
+try:
+    k8s_batch = client.BatchV1Api()
+    k8s_core = client.CoreV1Api()
+except Exception:
+    k8s_batch = None
+    k8s_core = None
 
 
 # =========================
@@ -962,6 +970,9 @@ async def create_job(req: CreateJobReq = Body(...)):
         callback_url=str(req.callbackUrl) if req.callbackUrl else None,
         callback_headers=req.callbackHeaders,
     )
+    if k8s_batch is None:
+        raise HTTPException(503, "Kubernetes API is not available; submit job with mode='pool'")
+
     logger.info("Submitting worker job for job_id=%s filename=%s", job_id, os.path.basename(filename))
 
     try:
@@ -998,15 +1009,20 @@ async def get_status(job_id: str):
     """
     logger.debug("Status request for job_id=%s", job_id)
     try:
-        selector = f"bridge-job-id={job_id}"
-        jobs = await run_in_threadpool(
-            k8s_batch.list_namespaced_job,
-            NAMESPACE,
-            label_selector=selector,
-        )
+        jobs = None
+        if k8s_batch is not None:
+            try:
+                selector = f"bridge-job-id={job_id}"
+                jobs = await run_in_threadpool(
+                    k8s_batch.list_namespaced_job,
+                    NAMESPACE,
+                    label_selector=selector,
+                )
+            except Exception as e:
+                logger.debug("Could not query Kubernetes batch jobs: %s", e)
 
-        # No Job found in K8s (or cleaned up by TTL). Check status file on disk.
-        if not jobs.items:
+        # No Job found in K8s (or cleaned up by TTL or pool mode). Check status file on disk.
+        if not jobs or not getattr(jobs, "items", None):
             job_status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
             if job_status_file.exists():
                 try:
@@ -1230,7 +1246,7 @@ async def download_job_output(job_id: str, format: Optional[str] = None):
             logger.warning("Error reading status file %s: %s", status_file, e)
 
     # 2. If not found via status_file, search SUBS_DIR by Job annotations
-    if not file_to_serve or not file_to_serve.exists():
+    if (not file_to_serve or not file_to_serve.exists()) and k8s_batch is not None:
         try:
             jobs = await run_in_threadpool(
                 k8s_batch.list_namespaced_job,
@@ -1277,26 +1293,27 @@ async def cancel_job(job_id: str):
     cancelled_anything = False
 
     # 1. Check Kubernetes batch Job
-    selector = f"bridge-job-id={job_id}"
-    try:
-        jobs = await run_in_threadpool(
-            k8s_batch.list_namespaced_job,
-            NAMESPACE,
-            label_selector=selector,
-        )
-        if jobs.items:
-            for job in jobs.items:
-                job_name = job.metadata.name
-                await run_in_threadpool(
-                    k8s_batch.delete_namespaced_job,
-                    name=job_name,
-                    namespace=NAMESPACE,
-                    propagation_policy="Foreground",
-                )
-                logger.info("Deleted Kubernetes job %s for job_id=%s", job_name, job_id)
-            cancelled_anything = True
-    except ApiException as e:
-        logger.warning("Kubernetes API error listing/deleting job %s: %s", job_id, e)
+    if k8s_batch is not None:
+        selector = f"bridge-job-id={job_id}"
+        try:
+            jobs = await run_in_threadpool(
+                k8s_batch.list_namespaced_job,
+                NAMESPACE,
+                label_selector=selector,
+            )
+            if jobs.items:
+                for job in jobs.items:
+                    job_name = job.metadata.name
+                    await run_in_threadpool(
+                        k8s_batch.delete_namespaced_job,
+                        name=job_name,
+                        namespace=NAMESPACE,
+                        propagation_policy="Foreground",
+                    )
+                    logger.info("Deleted Kubernetes job %s for job_id=%s", job_name, job_id)
+                cancelled_anything = True
+        except ApiException as e:
+            logger.warning("Kubernetes API error listing/deleting job %s: %s", job_id, e)
 
     # 2. Check task queue (pool mode)
     if queue_manager:

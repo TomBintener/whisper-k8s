@@ -268,6 +268,34 @@ class TestBridge(unittest.TestCase):
                     updated = json.load(f)
                 self.assertEqual(updated["phase"], "cancelled")
 
+    def test_standalone_mode_create_job_k8s_unavailable(self):
+        """Test creating a k8s job when Kubernetes API is unavailable raises 503."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video_file = os.path.join(temp_dir, "demo.mp4")
+            with open(video_file, "wb") as f:
+                f.write(b"dummy")
+
+            with patch.object(bridge, "VIDEOS_DIR", temp_dir), \
+                 patch.object(bridge, "k8s_batch", None):
+                req = bridge.CreateJobReq(filename="demo.mp4", mode="job")
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(bridge.create_job(req))
+                self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_standalone_mode_get_status_from_disk(self):
+        """Test getting job status in standalone mode reads directly from disk."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job_id = "standalone-job-456"
+            status_file = os.path.join(temp_dir, f"{job_id}.status.json")
+            with open(status_file, "w", encoding="utf-8") as f:
+                json.dump({"phase": "transcribing", "progress": 50, "job_id": job_id}, f)
+
+            with patch.object(bridge, "k8s_batch", None), \
+                 patch.object(bridge, "SUBS_DIR", temp_dir):
+                res = asyncio.run(bridge.get_status(job_id))
+                self.assertEqual(res.status, "running")
+                self.assertEqual(res.progress, 50)
+
 
 if __name__ == "__main__":
     unittest.main()
