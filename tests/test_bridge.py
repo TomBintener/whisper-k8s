@@ -212,6 +212,62 @@ class TestBridge(unittest.TestCase):
                     updated = json.load(f)
                 self.assertEqual(updated["phase"], "cancelled")
 
+    def test_download_embedded_video(self):
+        """Test GET /jobs/{job_id}/download?format=embedded serves embedded MP4."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job_id = "download-embed-123"
+            sub_file = os.path.join(temp_dir, "demo.srt")
+            embedded_file = os.path.join(temp_dir, "demo.embedded.mp4")
+            with open(sub_file, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+            with open(embedded_file, "wb") as f:
+                f.write(b"mp4-content")
+
+            status_file = os.path.join(temp_dir, f"{job_id}.status.json")
+            with open(status_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "phase": "done",
+                    "subtitlePath": sub_file
+                }, f)
+
+            with patch.object(bridge, "SUBS_DIR", temp_dir):
+                resp = asyncio.run(bridge.download_job_output(job_id, format="embedded"))
+                self.assertEqual(resp.path, embedded_file)
+                self.assertEqual(resp.media_type, "video/mp4")
+
+    def test_cancel_pool_mode_job(self):
+        """Test DELETE /jobs/{job_id} cancels queued pool mode job."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job_id = "cancel-pool-123"
+            subs_dir = os.path.join(temp_dir, "subs")
+            queue_dir = os.path.join(temp_dir, "queue")
+            os.makedirs(subs_dir)
+            os.makedirs(queue_dir)
+
+            # Create queued task in FileTaskQueue
+            import queue_manager
+            q = queue_manager.FileTaskQueue(queue_dir=queue_dir)
+            q.enqueue({"job_id": job_id, "filename": "demo.mp4"})
+
+            status_file = os.path.join(subs_dir, f"{job_id}.status.json")
+            with open(status_file, "w", encoding="utf-8") as f:
+                json.dump({"phase": "queued", "message": "Queued in pool"}, f)
+
+            with patch.object(bridge, "SUBS_DIR", subs_dir), \
+                 patch.dict(os.environ, {"QUEUE_DIR": queue_dir}), \
+                 patch.object(bridge.k8s_batch, "list_namespaced_job", return_value=MagicMock(items=[])):
+
+                resp = asyncio.run(bridge.cancel_job(job_id))
+                self.assertTrue(resp["ok"])
+
+                # Queued file should be removed from pending
+                self.assertEqual(q.size(), 0)
+
+                # Status file should be updated to cancelled
+                with open(status_file, "r", encoding="utf-8") as f:
+                    updated = json.load(f)
+                self.assertEqual(updated["phase"], "cancelled")
+
 
 if __name__ == "__main__":
     unittest.main()

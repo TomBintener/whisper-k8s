@@ -83,6 +83,18 @@ class TestDispatcher(unittest.TestCase):
             mount_names = [m.name for m in container.volume_mounts]
             self.assertIn("ssh-key", mount_names)
 
+    def test_build_job_forwards_callbacks(self):
+        """Test build_job forwards CALLBACK_URL and CALLBACK_HEADERS."""
+        with patch.object(dispatcher, "CALLBACK_URL", "https://api.example.com/callback"), \
+             patch.object(dispatcher, "CALLBACK_HEADERS", '{"X-Auth": "secret"}'), \
+             patch.object(dispatcher, "PVC_NAME", "test-pvc"), \
+             patch("dispatcher.make_projected_volume_sources", return_value=[]):
+            job = dispatcher.build_job(item_id="sample.mp4")
+            container = job.spec.template.spec.containers[0]
+            env_map = {e.name: e.value for e in container.env}
+            self.assertEqual(env_map.get("CALLBACK_URL"), "https://api.example.com/callback")
+            self.assertEqual(env_map.get("CALLBACK_HEADERS"), '{"X-Auth": "secret"}')
+
 
 if __name__ == "__main__":
     unittest.main()

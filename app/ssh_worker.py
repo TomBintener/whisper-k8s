@@ -43,7 +43,11 @@ FORWARD_VARS = [
     "WHISPER_CPP_MODEL_ROOT", # If using whisper.cpp
     "WHISPER_CPP_EXEC",       # Path to whisper.cpp executable
     "PYTORCH_ENABLE_MPS_FALLBACK",
-    "OUTPUT_DIR", "CLEANUP"
+    "OUTPUT_DIR", "CLEANUP",
+    "CUDA_MEMORY_FRACTION", "COMPUTE_TYPE",
+    "PARALLEL_CHUNKS", "CHUNK_DURATION_SEC", "ENABLE_CHUNKING",
+    "CALLBACK_URL", "CALLBACK_HEADERS",
+    "MODELS_DIR", "WHISPER_DOWNLOAD_ROOT", "HF_HOME", "TORCH_HOME",
 ]
 
 logger = logging.getLogger("ssh-worker")

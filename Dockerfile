@@ -40,7 +40,8 @@ RUN \
         httpx==0.27.2 \
         fastapi==0.115.0 \
         uvicorn[standard]==0.30.6 \
-        pydantic==2.9.2
+        pydantic==2.9.2 \
+        "redis>=5.0.0"
 
 WORKDIR /app
 COPY app/ .

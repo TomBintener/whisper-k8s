@@ -1166,8 +1166,14 @@ async def download_job_output(job_id: str, format: Optional[str] = None):
             with status_file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             sub_path = data.get("subtitlePath")
-            if sub_path and os.path.exists(sub_path):
-                file_to_serve = Path(sub_path)
+            if sub_path:
+                sub_p = Path(sub_path)
+                if format == "embedded":
+                    embedded_candidate = sub_p.parent / f"{sub_p.stem}.embedded.mp4"
+                    if embedded_candidate.exists():
+                        file_to_serve = embedded_candidate
+                elif sub_p.exists():
+                    file_to_serve = sub_p
         except Exception as e:
             logger.warning("Error reading status file %s: %s", status_file, e)
 
@@ -1214,8 +1220,11 @@ async def download_job_output(job_id: str, format: Optional[str] = None):
 @app.delete("/jobs/{job_id}")
 async def cancel_job(job_id: str):
     """
-    Cancel an active job and delete its Kubernetes batch Job resource.
+    Cancel an active job and delete its Kubernetes batch Job resource or queued task.
     """
+    cancelled_anything = False
+
+    # 1. Check Kubernetes batch Job
     selector = f"bridge-job-id={job_id}"
     try:
         jobs = await run_in_threadpool(
@@ -1223,36 +1232,49 @@ async def cancel_job(job_id: str):
             NAMESPACE,
             label_selector=selector,
         )
-        if not jobs.items:
-            raise HTTPException(404, f"No active job found with ID {job_id}")
-
-        for job in jobs.items:
-            job_name = job.metadata.name
-            await run_in_threadpool(
-                k8s_batch.delete_namespaced_job,
-                name=job_name,
-                namespace=NAMESPACE,
-                propagation_policy="Foreground",
-            )
-            logger.info("Deleted Kubernetes job %s for job_id=%s", job_name, job_id)
-
-        # Mark status file as cancelled if present
-        status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
-        if status_file.exists():
-            try:
-                with status_file.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                data["phase"] = "cancelled"
-                data["message"] = "Job cancelled by user"
-                with status_file.open("w", encoding="utf-8") as f:
-                    json.dump(data, f)
-            except Exception:
-                pass
-
-        return {"ok": True, "jobId": job_id, "message": "Job cancelled successfully"}
-    except HTTPException:
-        raise
+        if jobs.items:
+            for job in jobs.items:
+                job_name = job.metadata.name
+                await run_in_threadpool(
+                    k8s_batch.delete_namespaced_job,
+                    name=job_name,
+                    namespace=NAMESPACE,
+                    propagation_policy="Foreground",
+                )
+                logger.info("Deleted Kubernetes job %s for job_id=%s", job_name, job_id)
+            cancelled_anything = True
     except ApiException as e:
-        logger.error("Kubernetes API error cancelling job %s: %s", job_id, e)
-        raise HTTPException(500, f"Failed to delete job: {e}")
+        logger.warning("Kubernetes API error listing/deleting job %s: %s", job_id, e)
+
+    # 2. Check task queue (pool mode)
+    if queue_manager:
+        try:
+            q = queue_manager.get_queue()
+            if hasattr(q, "pending_dir"):
+                for pf in q.pending_dir.iterdir():
+                    if pf.is_file() and job_id in pf.name:
+                        pf.unlink(missing_ok=True)
+                        cancelled_anything = True
+                        logger.info("Removed queued task %s from pending queue", job_id)
+        except Exception as e:
+            logger.warning("Error checking queue for cancellation: %s", e)
+
+    # 3. Check and update status file on disk
+    status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
+    if status_file.exists():
+        try:
+            with status_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["phase"] = "cancelled"
+            data["message"] = "Job cancelled by user"
+            with status_file.open("w", encoding="utf-8") as f:
+                json.dump(data, f)
+            cancelled_anything = True
+        except Exception:
+            pass
+
+    if not cancelled_anything:
+        raise HTTPException(404, f"No active or queued job found with ID {job_id}")
+
+    return {"ok": True, "jobId": job_id, "message": "Job cancelled successfully"}
 

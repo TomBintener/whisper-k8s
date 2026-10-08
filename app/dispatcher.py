@@ -109,6 +109,8 @@ LIMITS_GPU = ENV.get("LIMITS_GPU")
 PARALLEL_CHUNKS = ENV.get("PARALLEL_CHUNKS")
 CHUNK_DURATION_SEC = ENV.get("CHUNK_DURATION_SEC")
 ENABLE_CHUNKING = ENV.get("ENABLE_CHUNKING")
+CALLBACK_URL = ENV.get("CALLBACK_URL")
+CALLBACK_HEADERS = ENV.get("CALLBACK_HEADERS")
 
 # Whisper CPP Configuration
 WHISPER_CPP_EXEC = os.getenv("WHISPER_CPP_EXEC")
@@ -429,6 +431,10 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
         env_list.append(client.V1EnvVar(name="CHUNK_DURATION_SEC", value=CHUNK_DURATION_SEC))
     if ENABLE_CHUNKING:
         env_list.append(client.V1EnvVar(name="ENABLE_CHUNKING", value=ENABLE_CHUNKING))
+    if CALLBACK_URL:
+        env_list.append(client.V1EnvVar(name="CALLBACK_URL", value=CALLBACK_URL))
+    if CALLBACK_HEADERS:
+        env_list.append(client.V1EnvVar(name="CALLBACK_HEADERS", value=CALLBACK_HEADERS))
 
     # Whisper CPP config
     if WHISPER_CPP_EXEC:

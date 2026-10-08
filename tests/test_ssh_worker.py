@@ -35,7 +35,10 @@ class TestSSHWorker(unittest.TestCase):
         """Verify essential variables are in FORWARD_VARS."""
         expected_vars = [
             "ITEM_ID", "BRIDGE_JOB_ID", "MODEL", "DEVICE",
-            "SUB_FORMAT", "EMBED_SUBS", "LANGUAGE", "TASK", "BACKEND"
+            "SUB_FORMAT", "EMBED_SUBS", "LANGUAGE", "TASK", "BACKEND",
+            "CUDA_MEMORY_FRACTION", "COMPUTE_TYPE", "PARALLEL_CHUNKS",
+            "CHUNK_DURATION_SEC", "ENABLE_CHUNKING", "CALLBACK_URL",
+            "CALLBACK_HEADERS", "MODELS_DIR", "WHISPER_DOWNLOAD_ROOT",
         ]
         for var in expected_vars:
             self.assertIn(var, ssh_worker.FORWARD_VARS)
