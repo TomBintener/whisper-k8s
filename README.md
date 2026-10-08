@@ -6,6 +6,7 @@
 [![NVIDIA GPU](https://img.shields.io/badge/NVIDIA-CUDA_GPU-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
 [![KEDA](https://img.shields.io/badge/KEDA-Autoscaling-FF69B4?logo=kubernetes&logoColor=white)](https://keda.sh/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **whisper-k8s** is an enterprise-grade, high-throughput distributed speech-to-text and subtitle platform built for Kubernetes. Originally architected for university lecture recording platforms (such as Opencast) and large media archives, it coordinates transcription and translation across heterogeneous clusters (Kubernetes GPU worker pools, ephemeral batch pods, and bare-metal hardware).
 
@@ -161,19 +162,46 @@ Explore the detailed manuals in the [`docs/`](docs/) directory:
 
 ## Verification & Testing
 
-`whisper-k8s` includes a 107-test automated verification suite that runs in ~1.1 seconds with **zero external dependencies**:
+`whisper-k8s` includes a 109-test automated verification suite that runs in ~1.1 seconds with **zero external dependencies**:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 ```text
-Ran 107 tests in 1.131s
+Ran 109 tests in 1.096s
 OK
 ```
 
 ---
 
+## Local Development & Setup
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/TomBi/whisper-k8s.git
+   cd whisper-k8s
+   ```
+
+2. **Configure environment variables**:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   # Install PyTorch with your platform accelerator (e.g. CUDA 12.1)
+   pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+   # Install core dependencies
+   pip install -r requirements.txt
+
+   # Or install development & linting tools
+   pip install -r requirements-dev.txt
+   ```
+
+---
+
 ## License
 
-This project is licensed under the Apache 2.0 License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

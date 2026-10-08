@@ -1,0 +1,21 @@
+# Core runtime dependencies for whisper-k8s
+#
+# NOTE: PyTorch should be installed with your specific platform accelerator:
+#   CUDA (NVIDIA): pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CPU (macOS/Linux): pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# REST API & Web Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+pydantic>=2.9.2
+httpx>=0.27.2
+
+# Kubernetes Client
+kubernetes>=29.0.0
+
+# Queue Storage & Distributed Caching
+redis>=5.0.0
+
+# Whisper Inference Engines
+faster-whisper>=1.2.1
+openai-whisper>=20240930

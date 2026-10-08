@@ -1,11 +1,45 @@
+# Media directories & test files
 videos/
 subs/
 *.mp4
 !demo.mp4
 *.srt
+*.vtt
 *.log
+data_e2e/
+
+# Environment files & secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python byte-code & caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+
+# Python virtual environments & build artifacts
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Testing, coverage & linter caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE & OS files
 .idea/
 *.iml
-data_e2e/
+.vscode/
+.DS_Store
+Thumbs.db
