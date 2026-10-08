@@ -77,11 +77,22 @@ def main() -> int:
         models_to_preload = [m.strip() for m in models_str.split(",") if m.strip()]
         return preload_models(models_to_preload)
 
-    if service == "worker":
+    if "--daemon" in sys.argv or "-d" in sys.argv:
+        import video_transcriber  # type: ignore
+
+        return video_transcriber.run_worker_daemon()
+
+    if service in ("worker", "transcriber"):
         # Only import worker when needed so bridge does not depend on worker env
         import video_transcriber  # type: ignore
 
         return video_transcriber.main()
+
+    if service in ("pool_worker", "daemon", "worker_pool"):
+        # Persistent warm worker daemon polling from task queue
+        import video_transcriber  # type: ignore
+
+        return video_transcriber.run_worker_daemon()
 
     if service == "dispatcher":
         # Only import dispatcher when needed so bridge does not require BRIDGE_JOB_ID

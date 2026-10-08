@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper-worker-pool
+  namespace: whisper
+  labels:
+    app: whisper-worker-pool
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: whisper-worker-pool
+  template:
+    metadata:
+      labels:
+        app: whisper-worker-pool
+    spec:
+      serviceAccountName: whisper-bridge
+      containers:
+        - name: worker
+          image: capcapcat/whisper-worker:1.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE
+              value: pool_worker
+            - name: VIDEOS_DIR
+              value: /data/videos
+            - name: SUBS_DIR
+              value: /data/subs
+            - name: MODELS_DIR
+              value: /data/models
+            - name: QUEUE_DIR
+              value: /data/queue
+            - name: WORKER_MODEL
+              value: base
+            - name: BACKEND
+              value: faster-whisper
+            - name: DEVICE
+              value: cuda
+            - name: COMPUTE_TYPE
+              value: int8_float16
+            - name: CUDA_MEMORY_FRACTION
+              value: "0.25"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "4Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: whisper-data

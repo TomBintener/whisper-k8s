@@ -44,6 +44,22 @@ except ImportError:
     except ImportError:
         chunking = None  # type: ignore
 
+try:
+    import webhook  # type: ignore
+except ImportError:
+    try:
+        from app import webhook  # type: ignore
+    except ImportError:
+        webhook = None  # type: ignore
+
+try:
+    import queue_manager  # type: ignore
+except ImportError:
+    try:
+        from app import queue_manager  # type: ignore
+    except ImportError:
+        queue_manager = None  # type: ignore
+
 # Default decoding settings for both Whisper and faster-whisper.
 # Tuned for long recordings to avoid repetition and reduce issues in silence.
 DEFAULT_WHISPER_ARGS: dict[str, object] = {
@@ -66,11 +82,12 @@ def write_status(
     message: Optional[str] = None,
     subtitle_path: Optional[str] = None,
     flavor: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> None:
     """Write a simple JSON status file for this job into the subtitle directory."""
     try:
         ensure_dir(subs_dir)
-        bridge_job_id = os.environ.get("BRIDGE_JOB_ID", "").strip()
+        bridge_job_id = (job_id or os.environ.get("BRIDGE_JOB_ID", "")).strip()
         data: Dict[str, Any] = {"phase": phase}
         if bridge_job_id:
             data["job_id"] = bridge_job_id
@@ -545,9 +562,13 @@ def embed_subtitles(
     return output_path
 
 
-def main() -> int:
-    """Entry point for a single transcription job."""
-    spec = load_job_spec()
+def process_job(
+    spec: Optional[Dict[str, Any]] = None,
+    model_cache: Optional[Dict[Any, Any]] = None,
+) -> int:
+    """Execute a single transcription job with optional warm model caching."""
+    if spec is None:
+        spec = load_job_spec()
 
     # Required settings.
     videos_dir = str(spec.get("videos_dir") or os.environ.get("VIDEOS_DIR", "")).strip()
@@ -561,6 +582,38 @@ def main() -> int:
         or os.environ.get("ITEM_ID", "")
         or os.environ.get("FILENAME", "")
     ).strip()
+    job_id = str(
+        spec.get("job_id")
+        or os.environ.get("BRIDGE_JOB_ID", "")
+        or item_id
+    ).strip()
+
+    callback_url = spec.get("callback_url") or spec.get("callbackUrl") or os.environ.get("CALLBACK_URL")
+    callback_headers = spec.get("callback_headers") or spec.get("callbackHeaders")
+    if isinstance(callback_headers, str):
+        try:
+            callback_headers = json.loads(callback_headers)
+        except Exception:
+            callback_headers = None
+
+    def _dispatch_webhook(success: bool, s_path: Optional[Path] = None, flv: Optional[str] = None, err: Optional[str] = None) -> None:
+        if not callback_url:
+            return
+        payload = {
+            "jobId": job_id,
+            "status": "succeeded" if success else "failed",
+            "subtitlePath": str(s_path) if (success and s_path) else None,
+            "flavor": flv if success else None,
+            "progress": 100 if success else 0,
+            "error": None if success else (err or "Job failed"),
+        }
+        try:
+            if webhook is not None and hasattr(webhook, "send_webhook"):
+                webhook.send_webhook(callback_url, payload, headers=callback_headers)
+            else:
+                logger.warning("[webhook] webhook module unavailable, skipping callback")
+        except Exception as exc:
+            logger.warning("[webhook] Failed to dispatch webhook: %s", exc)
 
     missing = [
         k
@@ -574,6 +627,7 @@ def main() -> int:
     ]
     if missing:
         logger.error("Missing required settings: %s", ", ".join(missing))
+        _dispatch_webhook(False, err="Missing required settings: " + ", ".join(missing))
         return 2
 
     # Optional settings.
@@ -662,7 +716,8 @@ def main() -> int:
 
     if not video_path.exists():
         logger.error("Input video does not exist: %s", video_path)
-        write_status(subs_dir_p, video_path.stem, "failed", message="Input video not found")
+        write_status(subs_dir_p, video_path.stem, "failed", message="Input video not found", job_id=job_id)
+        _dispatch_webhook(False, err=f"Input video not found: {video_path}")
         return 2
 
     if overwrite:
@@ -714,28 +769,38 @@ def main() -> int:
             phase="loading_model",
             progress=10,
             message=f"Loading model '{model_name}' ({backend}) on {device}",
+            job_id=job_id,
         )
 
-        if backend == "faster-whisper":
-            fw_download_root = (
-                spec.get("hf_home")
-                or os.environ.get("HF_HOME")
-                or (f"{models_dir}/huggingface" if models_dir else download_root)
-            )
-            if fw_download_root:
-                ensure_dir(Path(fw_download_root))
-            model = load_faster_model(
-                model_name,
-                device=device,
-                compute_type=compute_type,
-                download_root=fw_download_root,
-            )
-        elif backend == "whisper.cpp":
-            # For whisper.cpp, we don't load a model object in Python.
-            # We just pass the model name string to the transcribe function.
-            model = model_name
+        cache_key = (model_name, backend, device, compute_type)
+        if model_cache is not None and cache_key in model_cache:
+            model = model_cache[cache_key]
+            logger.info("[warm_worker] Reusing pre-loaded model in memory for %s (%s)", model_name, backend)
         else:
-            model = load_model(model_name, device=device, download_root=download_root)
+            if backend == "faster-whisper":
+                fw_download_root = (
+                    spec.get("hf_home")
+                    or os.environ.get("HF_HOME")
+                    or (f"{models_dir}/huggingface" if models_dir else download_root)
+                )
+                if fw_download_root:
+                    ensure_dir(Path(fw_download_root))
+                model = load_faster_model(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    download_root=fw_download_root,
+                )
+            elif backend == "whisper.cpp":
+                # For whisper.cpp, we don't load a model object in Python.
+                # We just pass the model name string to the transcribe function.
+                model = model_name
+            else:
+                model = load_model(model_name, device=device, download_root=download_root)
+
+            if model_cache is not None:
+                model_cache[cache_key] = model
+                logger.info("[warm_worker] Cached model instance in memory for %s (%s)", model_name, backend)
 
         # Transcribe and optionally embed.
         subs_path = None
@@ -747,6 +812,7 @@ def main() -> int:
                 phase="transcribing",
                 progress=30,
                 message="Transcribing audio",
+                job_id=job_id,
             )
 
             # Check if chunking should be applied
@@ -829,6 +895,7 @@ def main() -> int:
                                 phase="transcribing",
                                 progress=progress_pct,
                                 message=f"Transcribed chunk {len(chunk_sub_results)}/{len(planned_chunks)}",
+                                job_id=job_id,
                             )
 
                     stitched_content = chunking.stitch_subtitles(chunk_sub_results, fmt=fmt)
@@ -869,6 +936,7 @@ def main() -> int:
                     phase="embedding",
                     progress=70,
                     message="Embedding subtitles into video",
+                    job_id=job_id,
                 )
 
                 if fmt != "vtt":
@@ -886,6 +954,7 @@ def main() -> int:
                     phase="subs_done",
                     progress=80,
                     message="Subtitles generated and prepared for embedding",
+                    job_id=job_id,
                 )
 
                 if vtt_path is not None:
@@ -943,18 +1012,73 @@ def main() -> int:
             message="Job finished successfully",
             subtitle_path=str(subs_path) if subs_path else None,
             flavor=flavor,
+            job_id=job_id,
         )
+        _dispatch_webhook(True, s_path=subs_path, flv=flavor)
         return 0
     except Exception as e:
         logger.exception("Transcription job failed: %s", e)
         write_status(
             subs_dir_p,
-            video_path.stem,
+            video_path.stem if 'video_path' in locals() else item_id,
             phase="failed",
             progress=0,
             message=f"Job failed: {str(e)}",
+            job_id=job_id,
         )
+        _dispatch_webhook(False, err=str(e))
         return 1
+
+
+def run_worker_daemon(
+    queue: Optional[Any] = None,
+    stop_event: Optional[Any] = None,
+    poll_interval: float = 1.0,
+    max_jobs: Optional[int] = None,
+) -> int:
+    """
+    Run persistent warm worker daemon pulling jobs from the task queue.
+    Reuses models in memory across jobs to eliminate pod cold starts.
+    """
+    if queue is None:
+        if queue_manager is not None and hasattr(queue_manager, "get_queue"):
+            queue = queue_manager.get_queue()
+        else:
+            logger.error("[daemon] queue_manager not available")
+            return 1
+
+    logger.info("[daemon] Starting warm worker daemon...")
+    model_cache: Dict[Any, Any] = {}
+    jobs_processed = 0
+
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            logger.info("[daemon] Stop event received, shutting down daemon.")
+            break
+        if max_jobs is not None and jobs_processed >= max_jobs:
+            logger.info("[daemon] Reached max_jobs limit (%d), shutting down daemon.", max_jobs)
+            break
+
+        job_spec = queue.dequeue(timeout=poll_interval)
+        if not job_spec:
+            continue
+
+        job_id = job_spec.get("job_id") or job_spec.get("item_id")
+        logger.info("[daemon] Claimed job %s from queue, starting execution", job_id)
+        exit_code = process_job(spec=job_spec, model_cache=model_cache)
+        queue.complete(job_id, success=(exit_code == 0))
+        jobs_processed += 1
+        logger.info("[daemon] Finished job %s (exit_code=%d, total_processed=%d)", job_id, exit_code, jobs_processed)
+
+    return 0
+
+
+def main() -> int:
+    """Entry point for worker execution."""
+    service = os.environ.get("SERVICE", "").strip().lower()
+    if service in ("pool_worker", "daemon", "worker_pool") or "--daemon" in sys.argv:
+        return run_worker_daemon()
+    return process_job()
 
 
 if __name__ == "__main__":

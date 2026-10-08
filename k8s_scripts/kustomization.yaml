@@ -8,3 +8,4 @@ resources:
   - gpu-timeslicing.yaml
   - bridge.yaml
   - model-preload-job.yaml
+  - worker-deployment.yaml

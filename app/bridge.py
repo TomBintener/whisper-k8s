@@ -35,6 +35,22 @@ from pydantic import BaseModel, model_validator
 from kubernetes import client, config
 from kubernetes.client import ApiException
 
+try:
+    import queue_manager  # type: ignore
+except ImportError:
+    try:
+        from app import queue_manager  # type: ignore
+    except ImportError:
+        queue_manager = None  # type: ignore
+
+try:
+    import webhook  # type: ignore
+except ImportError:
+    try:
+        from app import webhook  # type: ignore
+    except ImportError:
+        webhook = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # =========================
@@ -231,7 +247,7 @@ class CreateJobReq(BaseModel):
     language: str | None = None  # e.g. "en", "de", etc.
     task: Literal["transcribe", "translate"] | None = None
     backend: Literal["whisper", "faster-whisper", "whisper.cpp"] | None = None
-    mode: Literal["kubernetes", "pod", "ssh"] | None = None
+    mode: Literal["kubernetes", "pod", "ssh", "pool"] | None = None
     outputDir: Optional[str] = None
     cleanup: bool = False
     computeType: Literal["float16", "int8_float16", "int8", "float32"] | None = None
@@ -239,6 +255,8 @@ class CreateJobReq(BaseModel):
     parallelChunks: Optional[int] = None
     chunkDurationSec: Optional[int] = None
     enableChunking: Optional[bool] = None
+    callbackUrl: Optional[str] = None
+    callbackHeaders: Optional[Dict[str, str]] = None
 
     @model_validator(mode="after")
     def _validate(self):
@@ -278,6 +296,8 @@ class CreateJobReq(BaseModel):
                 raise ValueError("chunkDurationSec must be at least 30 seconds")
         if self.trackUrl:
             _validate_remote_url(str(self.trackUrl))
+        if self.callbackUrl:
+            _validate_remote_url(str(self.callbackUrl))
         if self.outputDir:
             _safe_under(DATA_DIR, self.outputDir)
         return self
@@ -461,6 +481,8 @@ def _make_worker_job(
     parallel_chunks: int | None = None,
     chunk_duration_sec: int | None = None,
     enable_chunking: bool | None = None,
+    callback_url: str | None = None,
+    callback_headers: Dict[str, str] | None = None,
 ) -> client.V1Job:
     """
     Build a Kubernetes Job that runs the worker on a single file.
@@ -591,6 +613,11 @@ def _make_worker_job(
 
     if cleanup:
         env.append(client.V1EnvVar(name="CLEANUP", value="true"))
+
+    if callback_url:
+        env.append(client.V1EnvVar(name="CALLBACK_URL", value=callback_url))
+    if callback_headers:
+        env.append(client.V1EnvVar(name="CALLBACK_HEADERS", value=json.dumps(callback_headers)))
 
     # Persistent model cache roots on shared storage
     env.append(client.V1EnvVar(name="MODELS_DIR", value=MODELS_DIR))
@@ -818,6 +845,52 @@ async def create_job(req: CreateJobReq = Body(...)):
         await _download(str(req.trackUrl), video_path)
         logger.info("Downloaded remote track for job_id=%s to %s", job_id, video_path)
 
+    job_exec_mode = (req.mode or EXECUTION_MODE).lower()
+
+    if job_exec_mode in ("pool", "worker_pool"):
+        spec = {
+            "job_id": job_id,
+            "filename": os.path.basename(filename),
+            "item_id": os.path.basename(filename),
+            "videos_dir": VIDEOS_DIR,
+            "subs_dir": SUBS_DIR,
+            "format": req.format,
+            "device": req.device,
+            "embed_subs": req.embed,
+            "model": req.model or WORKER_MODEL,
+            "overwrite": req.overwrite,
+            "language": req.language,
+            "task": req.task,
+            "backend": req.backend or DEFAULT_BACKEND,
+            "output_dir": req.outputDir,
+            "cleanup": req.cleanup,
+            "compute_type": req.computeType,
+            "vram_fraction": req.vramFraction,
+            "parallel_chunks": req.parallelChunks,
+            "chunk_duration_sec": req.chunkDurationSec,
+            "enable_chunking": req.enableChunking,
+            "callback_url": str(req.callbackUrl) if req.callbackUrl else None,
+            "callback_headers": req.callbackHeaders,
+        }
+        job_status_file = Path(SUBS_DIR) / f"{job_id}.status.json"
+        _ensure_dir(str(job_status_file.parent))
+        with job_status_file.open("w", encoding="utf-8") as sf:
+            json.dump({
+                "phase": "queued",
+                "progress": 5,
+                "message": "Job queued in warm worker pool",
+                "filename": os.path.basename(filename),
+                "format": req.format,
+                "flavor": f"{req.format}+embedded" if req.embed else req.format,
+            }, sf)
+
+        q = queue_manager.get_queue() if queue_manager else None
+        if q is None:
+            raise HTTPException(500, "Worker pool queue is not configured")
+        q.enqueue(spec)
+        logger.info("Enqueued job_id=%s into warm worker pool queue", job_id)
+        return CreateJobResp(jobId=job_id, videoPath=video_path)
+
     worker = _make_worker_job(
         job_id=job_id,
         filename=os.path.basename(filename),
@@ -837,6 +910,8 @@ async def create_job(req: CreateJobReq = Body(...)):
         parallel_chunks=req.parallelChunks,
         chunk_duration_sec=req.chunkDurationSec,
         enable_chunking=req.enableChunking,
+        callback_url=str(req.callbackUrl) if req.callbackUrl else None,
+        callback_headers=req.callbackHeaders,
     )
     logger.info("Submitting worker job for job_id=%s filename=%s", job_id, os.path.basename(filename))
 
@@ -912,6 +987,22 @@ async def get_status(job_id: str):
                             status="failed",
                             progress=phase_progress or 0,
                             message=phase_message or "Job cancelled",
+                        )
+                    elif phase in ("running", "transcribing", "loading_model", "embedding", "subs_done"):
+                        return JobStatusResp(
+                            status="running",
+                            progress=phase_progress or 50,
+                            subtitlePath=sub_path,
+                            flavor=flavor,
+                            message=phase_message or f"Phase: {phase}",
+                        )
+                    elif phase == "queued":
+                        return JobStatusResp(
+                            status="queued",
+                            progress=phase_progress or 5,
+                            subtitlePath=sub_path,
+                            flavor=flavor,
+                            message=phase_message or "Job queued in warm worker pool",
                         )
                 except Exception as e:
                     logger.warning("Could not read job status file %s: %s", job_status_file, e)
