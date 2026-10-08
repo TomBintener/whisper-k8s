@@ -101,6 +101,11 @@ SSH_REMOTE_SCRIPT = os.getenv("SSH_REMOTE_SCRIPT", "/Users/Shared/whisper-k8s/ap
 SSH_REMOTE_PATH_PREFIX = os.getenv("SSH_REMOTE_PATH_PREFIX", "/Users/Shared/data")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/etc/secret/id_rsa")
 MODELS_DIR = ENV.get("MODELS_DIR", "/data/models")
+CUDA_MEMORY_FRACTION = ENV.get("CUDA_MEMORY_FRACTION")
+COMPUTE_TYPE = ENV.get("COMPUTE_TYPE")
+GPU_RESOURCE_NAME = ENV.get("GPU_RESOURCE_NAME", "nvidia.com/gpu")
+REQUESTS_GPU = ENV.get("REQUESTS_GPU")
+LIMITS_GPU = ENV.get("LIMITS_GPU")
 
 # Whisper CPP Configuration
 WHISPER_CPP_EXEC = os.getenv("WHISPER_CPP_EXEC")
@@ -408,6 +413,12 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
     env_list.append(client.V1EnvVar(name="HF_HOME", value=ENV.get("HF_HOME", f"{MODELS_DIR}/huggingface")))
     env_list.append(client.V1EnvVar(name="TORCH_HOME", value=ENV.get("TORCH_HOME", f"{MODELS_DIR}/torch")))
 
+    # Quantization and GPU time-slicing
+    if CUDA_MEMORY_FRACTION:
+        env_list.append(client.V1EnvVar(name="CUDA_MEMORY_FRACTION", value=CUDA_MEMORY_FRACTION))
+    if COMPUTE_TYPE:
+        env_list.append(client.V1EnvVar(name="COMPUTE_TYPE", value=COMPUTE_TYPE))
+
     # Whisper CPP config
     if WHISPER_CPP_EXEC:
         env_list.append(client.V1EnvVar(name="WHISPER_CPP_EXEC", value=WHISPER_CPP_EXEC))
@@ -416,9 +427,16 @@ def build_job(item_id: str, extra_env: Optional[Dict[str, str]] = None) -> clien
     else:
         env_list.append(client.V1EnvVar(name="WHISPER_CPP_MODEL_ROOT", value=f"{MODELS_DIR}/whisper.cpp"))
 
+    requests_res = {"cpu": REQUESTS_CPU, "memory": REQUESTS_MEM}
+    limits_res = {"cpu": LIMITS_CPU, "memory": LIMITS_MEM}
+    if REQUESTS_GPU:
+        requests_res[GPU_RESOURCE_NAME] = REQUESTS_GPU
+    if LIMITS_GPU:
+        limits_res[GPU_RESOURCE_NAME] = LIMITS_GPU
+
     resources = client.V1ResourceRequirements(
-        requests={"cpu": REQUESTS_CPU, "memory": REQUESTS_MEM},
-        limits={"cpu": LIMITS_CPU, "memory": LIMITS_MEM},
+        requests=requests_res,
+        limits=limits_res,
     )
 
     volume_mounts: List[client.V1VolumeMount] = []

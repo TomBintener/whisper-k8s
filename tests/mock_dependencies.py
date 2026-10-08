@@ -191,3 +191,11 @@ if "httpx" not in sys.modules:
             async def __aexit__(self, *args): pass
         httpx_mod.AsyncClient = AsyncClient
         sys.modules["httpx"] = httpx_mod
+
+if "uvicorn" not in sys.modules:
+    try:
+        import uvicorn  # type: ignore
+    except ImportError:
+        uvicorn_mod = ModuleType("uvicorn")
+        uvicorn_mod.run = lambda *args, **kwargs: None
+        sys.modules["uvicorn"] = uvicorn_mod

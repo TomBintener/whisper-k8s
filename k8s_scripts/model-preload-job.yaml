@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: whisper-model-preload
+  namespace: whisper
+  labels:
+    app.kubernetes.io/name: whisper-model-preload
+    app.kubernetes.io/part-of: whisper
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: whisper-model-preload
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: preloader
+          image: capcapcat/whisper-worker:1.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE
+              value: preload
+            - name: PRELOAD_MODELS
+              value: "base,small"
+            - name: MODELS_DIR
+              value: "/data/models"
+            - name: WHISPER_DOWNLOAD_ROOT
+              value: "/data/models/whisper"
+            - name: HF_HOME
+              value: "/data/models/huggingface"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: whisper-data

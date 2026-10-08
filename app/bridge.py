@@ -234,6 +234,8 @@ class CreateJobReq(BaseModel):
     mode: Literal["kubernetes", "pod", "ssh"] | None = None
     outputDir: Optional[str] = None
     cleanup: bool = False
+    computeType: Literal["float16", "int8_float16", "int8", "float32"] | None = None
+    vramFraction: Optional[float] = None
 
     @model_validator(mode="after")
     def _validate(self):
@@ -243,6 +245,7 @@ class CreateJobReq(BaseModel):
         - Either filename or trackUrl must be set.
         - format and device must be in the allowed sets.
         - task, if provided, must be one of the supported values.
+        - computeType and vramFraction, if provided, must be valid.
         """
         if not self.trackUrl and not self.filename:
             raise ValueError("Provide trackUrl or filename")
@@ -254,6 +257,15 @@ class CreateJobReq(BaseModel):
             raise ValueError("task must be 'transcribe' or 'translate'")
         if self.backend is not None and self.backend not in {"whisper", "faster-whisper", "whisper.cpp"}:
             raise ValueError("backend must be 'whisper' or 'faster-whisper' or 'whisper.cpp'")
+        if getattr(self, "computeType", None) is not None and self.computeType not in {"float16", "int8_float16", "int8", "float32"}:
+            raise ValueError("computeType must be 'float16', 'int8_float16', 'int8', or 'float32'")
+        if getattr(self, "vramFraction", None) is not None:
+            try:
+                frac = float(self.vramFraction)
+                if not (0.0 < frac <= 1.0):
+                    raise ValueError("vramFraction must be between 0.0 and 1.0")
+            except (ValueError, TypeError):
+                raise ValueError("vramFraction must be a float between 0.0 and 1.0")
         if self.trackUrl:
             _validate_remote_url(str(self.trackUrl))
         if self.outputDir:
@@ -434,6 +446,8 @@ def _make_worker_job(
     mode: str | None = None,
     output_dir: str | None = None,
     cleanup: bool = False,
+    compute_type: str | None = None,
+    vram_fraction: float | None = None,
 ) -> client.V1Job:
     """
     Build a Kubernetes Job that runs the worker on a single file.
@@ -467,6 +481,10 @@ def _make_worker_job(
         Optional directory to copy results to.
     cleanup:
         Whether to clean up input/output files after processing.
+    compute_type:
+        Optional quantization hint for faster-whisper (e.g. "int8_float16").
+    vram_fraction:
+        Optional per-process CUDA memory cap for GPU time-slicing (e.g. 0.25).
 
     Returns
     -------
@@ -534,6 +552,12 @@ def _make_worker_job(
     else:
         env.append(client.V1EnvVar(name="BACKEND", value=DEFAULT_BACKEND))
 
+    # Quantization and GPU time-slicing
+    if compute_type:
+        env.append(client.V1EnvVar(name="COMPUTE_TYPE", value=compute_type))
+    if vram_fraction is not None:
+        env.append(client.V1EnvVar(name="CUDA_MEMORY_FRACTION", value=str(vram_fraction)))
+
     # Output Dir and Cleanup
     if output_dir:
         env.append(client.V1EnvVar(name="OUTPUT_DIR", value=output_dir))
@@ -560,8 +584,9 @@ def _make_worker_job(
     requests_res = {"cpu": "500m", "memory": "4Gi"}
     limits_res = {"cpu": "2", "memory": "8Gi"}
     if device == "gpu" and job_exec_mode != "ssh":
-        requests_res["nvidia.com/gpu"] = "1"
-        limits_res["nvidia.com/gpu"] = "1"
+        gpu_resource = os.getenv("GPU_RESOURCE_NAME", "nvidia.com/gpu")
+        requests_res[gpu_resource] = "1"
+        limits_res[gpu_resource] = "1"
 
     resources = client.V1ResourceRequirements(
         requests=requests_res,
@@ -727,9 +752,11 @@ async def create_job(req: CreateJobReq = Body(...)):
     """
     job_id = uuid.uuid4().hex
     logger.info(
-        "Create job request job_id=%s device=%s format=%s embed=%s model=%s overwrite=%s language=%s task=%s backend=%s mode=%s filename=%s trackUrl=%s outputDir=%s cleanup=%s",
+        "Create job request job_id=%s device=%s computeType=%s vramFraction=%s format=%s embed=%s model=%s overwrite=%s language=%s task=%s backend=%s mode=%s filename=%s trackUrl=%s outputDir=%s cleanup=%s",
         job_id,
         req.device,
+        req.computeType,
+        req.vramFraction,
         req.format,
         req.embed,
         req.model,
@@ -778,6 +805,8 @@ async def create_job(req: CreateJobReq = Body(...)):
         mode=req.mode,
         output_dir=req.outputDir,
         cleanup=req.cleanup,
+        compute_type=req.computeType,
+        vram_fraction=req.vramFraction,
     )
     logger.info("Submitting worker job for job_id=%s filename=%s", job_id, os.path.basename(filename))
 

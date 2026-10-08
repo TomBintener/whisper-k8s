@@ -5,4 +5,6 @@ resources:
   - rbac-bridge.yaml
   - pv.yaml
   - pvc.yaml
+  - gpu-timeslicing.yaml
   - bridge.yaml
+  - model-preload-job.yaml

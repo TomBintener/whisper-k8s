@@ -142,7 +142,7 @@ class TestP0P1Optimizations(unittest.TestCase):
         with patch.object(video_transcriber, "WhisperModel", mock_whisper_model):
             video_transcriber.load_faster_model("small", device="cpu", download_root="/data/models/hf")
             mock_whisper_model.assert_called_once_with(
-                "small", device="cpu", compute_type="float16", download_root="/data/models/hf"
+                "small", device="cpu", compute_type="float32", download_root="/data/models/hf"
             )
 
 

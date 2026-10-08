@@ -163,6 +163,44 @@ def pick_device(selection: str) -> str:
     return "cpu"
 
 
+def configure_cuda_memory(spec: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """
+    Configure CUDA per-process memory limits and allocator behavior to prevent
+    OOM crashes when sharing physical GPUs across multiple worker pods via time-slicing.
+    """
+    fraction_raw = None
+    if spec:
+        fraction_raw = spec.get("vram_fraction") or spec.get("cuda_memory_fraction")
+    if fraction_raw is None:
+        fraction_raw = os.environ.get("CUDA_MEMORY_FRACTION")
+
+    fraction: Optional[float] = None
+    if fraction_raw is not None:
+        try:
+            val = float(fraction_raw)
+            if 0.0 < val <= 1.0:
+                fraction = val
+            else:
+                logger.warning("[cuda] invalid CUDA_MEMORY_FRACTION '%s' (must be between 0.0 and 1.0)", fraction_raw)
+        except (ValueError, TypeError):
+            logger.warning("[cuda] unparseable CUDA_MEMORY_FRACTION: %s", fraction_raw)
+
+    # Set expandable segments in PyTorch allocator to mitigate virtual memory fragmentation
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+    if fraction is not None:
+        if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+            try:
+                torch.cuda.set_per_process_memory_fraction(fraction)
+                logger.info("[cuda] configured per-process memory fraction: %.2f", fraction)
+            except Exception as e:
+                logger.warning("[cuda] failed to set per-process memory fraction: %s", e)
+        else:
+            logger.info("[cuda] memory fraction %.2f parsed (CUDA device not active or unavailable)", fraction)
+
+    return fraction
+
+
 def load_model(name: str, device: str, download_root: Optional[str] = None):
     """Load a Whisper model with the given name on the requested device."""
     if whisper is None:
@@ -172,7 +210,7 @@ def load_model(name: str, device: str, download_root: Optional[str] = None):
 
 
 def load_faster_model(name: str, device: str, compute_type: str = "float16", download_root: Optional[str] = None):
-    """Load a faster-whisper model on GPU or CPU with persistent download_root."""
+    """Load a faster-whisper model on GPU or CPU with persistent download_root and quantization support."""
     if WhisperModel is None:
         raise RuntimeError("faster-whisper is not installed")
 
@@ -181,7 +219,12 @@ def load_faster_model(name: str, device: str, compute_type: str = "float16", dow
     else:
         fw_device = "cpu"
 
-    logger.info("[model] loading faster-whisper '%s' on %s (download_root=%s)", name, fw_device, download_root)
+    # CPU backends do not support float16 or int8_float16 in CTranslate2
+    if fw_device == "cpu" and ("float16" in compute_type):
+        logger.info("[model] CPU does not support '%s', falling back to 'float32'", compute_type)
+        compute_type = "float32"
+
+    logger.info("[model] loading faster-whisper '%s' on %s (%s, download_root=%s)", name, fw_device, compute_type, download_root)
     return WhisperModel(name, device=fw_device, compute_type=compute_type, download_root=download_root)
 
 
@@ -538,6 +581,10 @@ def main() -> int:
         logger.warning("Unknown backend '%s', falling back to 'whisper'", backend)
         backend = "whisper"
 
+    compute_type = str(
+        spec.get("compute_type") or os.environ.get("COMPUTE_TYPE") or ""
+    ).strip().lower()
+
     device_sel = str(spec.get("device") or os.environ.get("DEVICE", "auto"))
     language = spec.get("language", os.environ.get("LANGUAGE"))
     task = str(spec.get("task") or os.environ.get("TASK", "transcribe"))
@@ -603,12 +650,28 @@ def main() -> int:
 
     # Model and device.
     device = pick_device(device_sel)
+    vram_fraction = None
+    if device == "cuda":
+        vram_fraction = configure_cuda_memory(spec)
+
+    # Resolve compute_type default
+    if not compute_type:
+        if device == "cuda":
+            if vram_fraction is not None and vram_fraction <= 0.5:
+                compute_type = "int8_float16"
+            else:
+                compute_type = "float16"
+        else:
+            compute_type = "float32"
+
     logger.info(
-        "[job] item_id=%s model=%s backend=%s device=%s fmt=%s overwrite=%s embed=%s",
+        "[job] item_id=%s model=%s backend=%s device=%s compute_type=%s vram_fraction=%s fmt=%s overwrite=%s embed=%s",
         item_id,
         model_name,
         backend,
         device,
+        compute_type,
+        vram_fraction,
         fmt,
         overwrite,
         embed_flag,
@@ -634,6 +697,7 @@ def main() -> int:
             model = load_faster_model(
                 model_name,
                 device=device,
+                compute_type=compute_type,
                 download_root=fw_download_root,
             )
         elif backend == "whisper.cpp":

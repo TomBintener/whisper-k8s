@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whisper-gpu-timeslicing
+  namespace: whisper
+  labels:
+    app.kubernetes.io/name: whisper-gpu-timeslicing
+    app.kubernetes.io/part-of: whisper
+data:
+  # 4x Time-Slicing Configuration:
+  # Divides each physical NVIDIA GPU into 4 virtual slices.
+  # Optimal for Whisper base, small, and medium models on 16GB-24GB GPUs (T4, A10G, RTX 3090/4090).
+  # Each slice operates safely with CUDA_MEMORY_FRACTION=0.25 and int8_float16 quantization.
+  time-slicing-4x: |-
+    version: v1
+    sharing:
+      timeSlicing:
+        resources:
+          - name: nvidia.com/gpu
+            replicas: 4
+
+  # 2x Time-Slicing Configuration:
+  # Divides each physical NVIDIA GPU into 2 virtual slices.
+  # Recommended for Whisper large-v3 workloads requiring higher VRAM margins (~8GB-12GB per worker).
+  time-slicing-2x: |-
+    version: v1
+    sharing:
+      timeSlicing:
+        resources:
+          - name: nvidia.com/gpu
+            replicas: 2
